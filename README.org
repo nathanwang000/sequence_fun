@@ -1,0 +1,59 @@
+This project aims to validate assumptions made in modeling time series data
+applied to 2 large scale clinical datasets (Cdiff and MIMIC 3 data).
+
+A manuscript of the project is available [[https://www.overleaf.com/project/5bbe17c8bf45364f015ded68][online]].
+
+The readme page here aims to serve as a plan to accomplish this project. We
+break the project into three stages. In stage one, we focus on providing a nice
+framework for modeling the data. In stage two, we carefully reproduce result
+reported in the literature. In stage 3, we develop and tune models to beat state of the
+art.
+
+* TODO Understanding the data
+  
+  - [X] read through [[./mimic3/README.md][documentation]]
+    
+    the result are saved in the results folder for each method, it is a json
+    file with accuracy and auc, as well as a few other statistics. The easiest
+    to read example is [[mimic3models/in_hospital_mortality/logistic/][logistic regression]]. 
+
+    Data are store in data/ directory. The data are read using the reader object
+    from mimic3benchmark.readers, note that for in hostpital motality reader,
+    the period_length variable is a dummy variable equal to 48. 
+
+    what is listfile_path?
+    It seems like is saying what files are for train/test/val and what is the
+    target. Note that in the reader 
+    
+  - [X] run baseline code for logistic regression
+  - [X] run baseline code for RNN
+  - [ ] compute data stats
+  - [ ] write wrappers for easy evaluation
+    - [ ] rewrite the models in [[mimic3models/common_keras_models/][files]] using pytorch
+    - [ ] rewrite model evaluation using pytorch and python3 code
+
+* Develop baselines
+
+  - [ ] reproduce single task LSTM result with pytorch
+  - [ ] reproduce logistic regression result with pytorch
+  - [ ] reproduce multi-task LSTM result (this is not a priority)
+  - [-] implement all baselines
+    - [ ] logistic regression
+    - [ ] independent logistic regression (one for each time step)
+    - [ ] staged logistic regression
+    - [X] lstm
+    - [ ] independent lstm
+    - [ ] staged lstm
+  - [ ] get result on all baselines
+    - [ ] logistic regression
+    - [ ] independent logistic regression (one for each time step)
+    - [ ] staged logistic regression
+    - [ ] lstm
+    - [ ] independent lstm
+    - [ ] staged lstm
+
+* Beating the record
+  
+  - [ ] make sure MoA and MoW is correctly implemented
+  - [ ] vary initialization techniques
+  - [ ] grid search on K, lambda generation network, task specific MoE 
