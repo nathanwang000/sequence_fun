@@ -29,8 +29,8 @@ art.
   - [X] run baseline code for RNN
   - [ ] compute data stats
   - [ ] write wrappers for easy evaluation
-    - [ ] rewrite the models in [[mimic3models/common_keras_models/][files]] using pytorch
-    - [ ] rewrite model evaluation using pytorch and python3 code
+    - [ ] rewrite the models in [[mimic3models/common_keras_models/][files]] using pytorch (10/16)
+    - [ ] rewrite model evaluation using pytorch and python3 code (10/16)
 
 * Develop baselines
 
