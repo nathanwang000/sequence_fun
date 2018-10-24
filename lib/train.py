@@ -90,5 +90,35 @@ class TrainRNN(Train):
         self.optimizer.step()
 
         return output, loss.item()
-                            
+
+class TrainMetaRNN(Train):
+
+    def train_step(self, x, y, x_lengths):
+        hidden = self.net.initHidden(batch_size=self.batch_size)
+
+        self.optimizer.zero_grad()
+        output, hidden = self.net(x, hidden, x_lengths)
+        loss = self.criterion(output, y)
+        loss.backward()
+        self.net.after_backward()                      
+        self.optimizer.step()
+
+        return output, loss.item()
+
+# debug function: todo: delete
+def print_grad(net):
+    print('\nmodels:')
+    for i, m in enumerate(net.models):
+        print(i)
+        for p in m.parameters():
+            if p.grad is not None:
+                print(torch.sum(torch.abs(p.grad)))
+
+    print('\nmeta models:')
+    for i, m in enumerate(net.meta_models):
+        print(i)
+        for p in m.parameters():
+            if p.grad is not None:            
+                print(torch.sum(torch.abs(p.grad)))
     
+
