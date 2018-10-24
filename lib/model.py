@@ -49,6 +49,10 @@ class RNN(nn.Module):
     def get_model(self, t):
         raise NotImplementedError()
     
+    def base_model(self):
+        # give the base model to use
+        raise NotImplementedError()
+    
     def eval_forward(self, x, y, x_lengths):
         # this function is for evaluation        
         self.eval()
@@ -63,6 +67,15 @@ class RNN(nn.Module):
                 torch.zeros(1, batch_size, self.hidden_size))
 
     def forward(self, x, hidden, input_lengths):
+        raise NotImplementedError()
+
+#######################################################################################
+class RNN_Memory(RNN):
+
+    def base_model(self):
+        return torch.nn.LSTM(self.input_size, self.hidden_size)
+    
+    def forward(self, x, hidden, input_lengths):    
         # input of size seq_len x bs x d, padded sequences with input_lengths specified
         # this model assumes one output at the end
         seq_len, bs, d = x.shape
@@ -84,42 +97,42 @@ class RNN(nn.Module):
         output = self.softmax(output)
         return output, hidden
 
-class RNN_LSTM(RNN):
+class RNN_Memoryless(RNN):
+    '''mlp sharing the same interface with RNN, basically 
+    ignore time dependence and only use last step information for prediction'''
 
-    def custom_init(self):
-        self.model = torch.nn.LSTM(self.input_size, self.hidden_size)        
+    def base_model(self):
+        return MLP([self.input_size, self.hidden_size, self.output_size])
 
-    def forward(self, input, hidden, input_lengths):
-        bs = input.shape[1]
-        
-        # change the padded data with variable length: save computation
-        input = torch.nn.utils.rnn.pack_padded_sequence(input, input_lengths)
-        
-        o, (h, cell) = self.model(input, hidden) # entire word
-        # inverse run: do not need this in my case:
-        #o, _ = torch.nn.utils.rnn.pad_packed_sequence(o)
+    def forward(self, x, hidden, input_lengths):
+        # input of size seq_len x bs x d, padded sequences with input_lengths specified
+        # this model assumes one output at the end
+        seq_len, bs, d = x.shape
 
-        # RNN_ILSTM is perhaps more appropriate: todo
-        # only use hidden state, minibatch input: h of size num_layers x bs x d        
-        output = self.h2o(h.transpose(0,1).view(bs, -1)) 
-        output = self.softmax(output)
-        return output, (h, cell)
+        outputs = []
+        for i, l in enumerate(input_lengths):
+            o = self.get_model(l-1)(x[l-1, i].view(1, d))
+            outputs.append(o)
+        o = torch.cat(outputs, 0)
+        o = self.softmax(o)
 
-class RNN_ILSTM(RNN):
-    ''' independent lstm: each time step assign a different model '''
+        return o, hidden # hidden is dummy here
+
+class RNN_Independent(RNN): # sharing strategy
+    ''' independent: each time step assign a different model '''
     def custom_init(self):
         self.models = torch.nn.ModuleList() # modulelist makes module params visible
         self.set_max_length(3)
 
     def set_max_length(self, t):
         while t >= len(self.models):
-            self.models.append(torch.nn.LSTM(self.input_size, self.hidden_size))
+            self.models.append(self.base_model())
         
     def get_model(self, t):
         return self.models[t]
-        
-class RNN_SLSTM(RNN):
-    ''' staged LSTM, manully share time steps '''
+
+class RNN_Staged(RNN): # sharing strategy
+    ''' staged: manully share time steps '''
     def custom_init(self):
         self.groups = []
         self.models = torch.nn.ModuleList()
@@ -130,23 +143,20 @@ class RNN_SLSTM(RNN):
         # assumes groups has no member overlap
         self.groups = groups
         while len(self.models) <= len(self.groups):
-            self.models.append(torch.nn.LSTM(self.input_size, self.hidden_size))
+            self.models.append(self.base_model())
     
     def get_model(self, t):
         for i, g in enumerate(self.groups):
             if t in g:
                 return self.models[i]
         return self.models[len(self.groups)]
-        
-class RNN_MoW(RNN):
+
+class RNN_MoW(RNN): # sharing strategy
     '''mixture of weights for each time step with total of k clusters'''
     def custom_init(self):
         self.models = torch.nn.ModuleList()
         self.meta_models = torch.nn.ModuleList()
         self.setKT(1, 3)
-
-    def _new_weights(self):
-        return torch.nn.LSTM(self.input_size, self.hidden_size)
 
     def setKT(self, k, t): # k * t weights
         '''k clusters with maximum of t time steps'''
@@ -154,10 +164,10 @@ class RNN_MoW(RNN):
         self.T = t
 
         while len(self.models) < t:
-            self.models.append(self._new_weights())
+            self.models.append(self.base_model())
 
         while len(self.meta_models) < k:
-            self.meta_models.append(self._new_weights())            
+            self.meta_models.append(self.base_model())            
 
         self.coef = torch.nn.Parameter(torch.zeros(t, k)) # each row should add to 1
         nn.init.uniform_(self.coef)
@@ -186,67 +196,66 @@ class RNN_MoW(RNN):
                 c = self._combine_weights(params, t)
                 c.backward(p.grad)
     
+########################################################################################
+class RNN_LSTM(RNN_Memory):
+
+    def custom_init(self):
+        self.model = self.base_model()
+
+    def forward(self, input, hidden, input_lengths):
+        bs = input.shape[1]
+        
+        # change the padded data with variable length: save computation
+        input = torch.nn.utils.rnn.pack_padded_sequence(input, input_lengths)
+        
+        o, (h, cell) = self.model(input, hidden) # entire word
+        # inverse run: do not need this in my case:
+        #o, _ = torch.nn.utils.rnn.pad_packed_sequence(o)
+
+        # RNN_ILSTM is perhaps more appropriate: todo
+        # only use hidden state, minibatch input: h of size num_layers x bs x d        
+        output = self.h2o(h.transpose(0,1).view(bs, -1)) 
+        output = self.softmax(output)
+        return output, (h, cell)
+
+class RNN_ILSTM(RNN_Memory, RNN_Independent):
+    def describe(self):
+        return '''independent lstm: each time step assign a different model'''
+        
+class RNN_SLSTM(RNN_Memory, RNN_Staged):
+    def describe(self):
+        return '''staged LSTM, manully share time steps'''
+        
+class RNN_LSTM_MoW(RNN_Memory, RNN_MoW):
+    def describe(self):
+        return '''mixture of weights for each time step with total of k clusters'''
+    
 ###################################################################################### 
-class RNN_MLP(RNN):
+class RNN_MLP(RNN_Memoryless):
     '''logistic regression sharing the same interface with RNN, basically 
     ignore time dependence and only use last step information for prediction'''
 
     def custom_init(self):
-        self.model = MLP([self.input_size, self.hidden_size, self.output_size])
+        self.model = self.base_model()
 
     def get_model(self, t):
         return self.model
     
-    def forward(self, x, hidden, input_lengths):
-        # input of size seq_len x bs x d, padded sequences with input_lengths specified
-        # this model assumes one output at the end
-        seq_len, bs, d = x.shape
-
-        outputs = []
-        for i, l in enumerate(input_lengths):
-            o = self.get_model(l-1)(x[l-1, i].view(1, d))
-            outputs.append(o)
-        o = torch.cat(outputs, 0)
-        o = self.softmax(o)
-
-        return o, hidden # hidden is dummy here
-
-class RNN_IMLP(RNN_MLP):
-    '''independent logistic regression sharing the same interface with RNN, basically 
-    ignore time dependence and only use last step information for prediction'''
-
-    def custom_init(self):
-        self.models = torch.nn.ModuleList()
-        self.set_max_length(3)
-
-    def set_max_length(self, t):
-        while t >= len(self.models):
-            self.models.append(MLP([self.input_size,
-                                    self.hidden_size, self.output_size]))
-
-    def get_model(self, t):
-        return self.models[t]
+class RNN_IMLP(RNN_Memoryless, RNN_Independent):
+    def describe(self):
+        return '''independent MLP sharing the same interface with RNN, 
+        basically ignore time dependence and only use last step information for 
+        prediction'''
     
-class RNN_SMLP(RNN_MLP):
-    '''staged logistic regression sharing the same interface with RNN, basically 
-    ignore time dependence and only use last step information for prediction'''
+class RNN_SMLP(RNN_Memoryless, RNN_Staged):
+    def describe(self):
+        return '''staged logistic regression sharing the same interface with RNN, 
+        basically ignore time dependence and only use last step information for 
+        prediction'''
 
-    def custom_init(self):
-        self.groups = []
-        self.models = torch.nn.ModuleList()
-        self.set_shared_groups([])
-
-    def set_shared_groups(self, groups):
-        # each group share one model
-        # assumes groups has no member overlap
-        self.groups = groups
-        while len(self.models) <= len(self.groups):
-            self.models.append(MLP([self.input_size,
-                                    self.hidden_size, self.output_size]))
+class RNN_MLP_MoW(RNN_Memoryless, RNN_MoW):
+    def describe(self):
+        return '''mixture of weights for each time step with total of k clusters'''
     
-    def get_model(self, t):
-        for i, g in enumerate(self.groups):
-            if t in g:
-                return self.models[i]
-        return self.models[len(self.groups)]
-        
+
+
