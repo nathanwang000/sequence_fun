@@ -13,7 +13,7 @@ class Evaluation(object):
 
         # Go through a bunch of examples and record which are correctly guessed
         for i in range(n_confusion):
-            d = self.data.random_batch(1)
+            d = self.data.next_batch(1)
             y = d[1]
             output = self.net.eval_forward(*d)
             _, ans = torch.max(output, 1)

@@ -104,6 +104,20 @@ class RNN_Memoryless(RNN):
     def base_model(self):
         return MLP([self.input_size, self.hidden_size, self.output_size])
 
+    def forward_all(self, x, hidden, input_lengths): # todo 
+        # input of size seq_len x bs x d, padded sequences with input_lengths specified
+        # this model gives output at each time step
+        seq_len, bs, d = x.shape
+
+        outputs = []
+        for t in range(seq_len):
+            o = self.get_model(t)(x[t]).unsqueeze(0) # bsxd
+            outputs.append(o)
+        o = torch.cat(outputs, 0) # seq_len x bs x d
+        o = torch.nn.functional.log_softmax(o, 2)
+
+        return o, hidden # hidden is dummy here
+    
     def forward(self, x, hidden, input_lengths):
         # input of size seq_len x bs x d, padded sequences with input_lengths specified
         # this model assumes one output at the end
@@ -202,6 +216,22 @@ class RNN_LSTM(RNN_Memory):
     def custom_init(self):
         self.model = self.base_model()
 
+    def forward_all(self, input, hidden, input_lengths):
+        bs = input.shape[1]
+        
+        # change the padded data with variable length: save computation
+        input = torch.nn.utils.rnn.pack_padded_sequence(input, input_lengths)
+        
+        o, (h, cell) = self.model(input, hidden) # entire word
+        # inverse run: do not need for single prediction
+        o, _ = torch.nn.utils.rnn.pad_packed_sequence(o)
+
+        # RNN_ILSTM is perhaps more appropriate: todo
+        # only use hidden state, minibatch input: h of size num_layers x bs x d        
+        output = self.h2o(h.transpose(0,1).view(bs, -1)) 
+        output = self.softmax(output)
+        return output, (h, cell)
+
     def forward(self, input, hidden, input_lengths):
         bs = input.shape[1]
         
@@ -209,7 +239,7 @@ class RNN_LSTM(RNN_Memory):
         input = torch.nn.utils.rnn.pack_padded_sequence(input, input_lengths)
         
         o, (h, cell) = self.model(input, hidden) # entire word
-        # inverse run: do not need this in my case:
+        # inverse run: do not need for single prediction
         #o, _ = torch.nn.utils.rnn.pad_packed_sequence(o)
 
         # RNN_ILSTM is perhaps more appropriate: todo
