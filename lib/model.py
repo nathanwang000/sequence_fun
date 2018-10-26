@@ -67,8 +67,30 @@ class RNN(nn.Module):
         return (torch.zeros(1, batch_size, self.hidden_size),
                 torch.zeros(1, batch_size, self.hidden_size))
 
-    def forward(self, x, hidden, input_lengths):
+    def after_backward(self):
+        # code to run after backward function, before optimizer
+        return
+        
+    def forward_core(self, x, hidden, input_lengths):
         raise NotImplementedError()
+    
+    def forward(self, x, hidden, input_lengths):
+        seq_len, bs, _ = x.shape
+
+        o, hidden = self.forward_core(x, hidden, input_lengths)
+
+        # dim transformation: (seq_len, bs, d) -> (seq_len x bs, d)
+        o = o.contiguous()
+        o = o.view(-1, o.shape[2])
+
+        # run through prediction layer: todo: absorb this to base model
+        o = self.h2o(o)
+        o = self.softmax(o)
+
+        # dim transformation
+        o = o.view(seq_len, bs, self.output_size)
+        
+        return o, hidden
 
 #######################################################################################
 class RNN_Memory(RNN):
@@ -76,10 +98,9 @@ class RNN_Memory(RNN):
     def base_model(self):
         return torch.nn.LSTM(self.input_size, self.hidden_size)
 
-    def forward(self, x, hidden, input_lengths):    
+    def forward_core(self, x, hidden, input_lengths):    
         seq_len, bs, _ = x.shape
 
-        ###### only part different from RNN_LSTM forward function ######
         outputs = []
         for t in range(seq_len):
             # get a new model for each time step            
@@ -88,42 +109,8 @@ class RNN_Memory(RNN):
             outputs.append(o)
         o = torch.cat(outputs, 0) # (seq_len, bs, _)
 
-        # dim transformation: (seq_len, bs, d) -> (seq_len x bs, d)
-        o = o.contiguous()
-        o = o.view(-1, o.shape[2])
-        
-        # run through prediction layer
-        o = self.h2o(o)
-        o = self.softmax(o)
-
-        # dim transformation
-        o = o.view(seq_len, bs, self.output_size)
-        
         return o, hidden
     
-    def forward_old(self, x, hidden, input_lengths):
-        warnings.warn('deprecated', DeprecationWarning)        
-        # input of size seq_len x bs x d, padded sequences with input_lengths specified
-        # this model assumes one output at the end
-        seq_len, bs, d = x.shape
-        
-        outputs = []
-        for t in range(seq_len):
-            # get a new lstm for each time step            
-            model = self.get_model(t)
-            o, hidden = model(x[t].view(1, bs, d), hidden)
-            outputs.append(o)
-        o = torch.cat(outputs, 0)
-        h, c = hidden
-        
-        # mask o by input_length, seq_len x bs x d
-        h_t = o[list(map(lambda l: l-1, input_lengths)), range(bs)]
-        
-        # only use hidden state, minibatch input: h_t of size bs x d
-        output = self.h2o(h_t)
-        output = self.softmax(output)
-        return output, hidden
-
 class RNN_Memoryless(RNN):
     '''mlp sharing the same interface with RNN, basically 
     ignore time dependence and only use last step information for prediction'''
@@ -131,10 +118,9 @@ class RNN_Memoryless(RNN):
     def base_model(self):
         return MLP([self.input_size, self.hidden_size])
 
-    def forward(self, x, hidden, input_lengths):
+    def forward_core(self, x, hidden, input_lengths):
         seq_len, bs, _ = x.shape
 
-        ###### only part different from RNN_LSTM forward function ######
         outputs = []
         for t in range(seq_len):
             # get a new model for each time step            
@@ -143,34 +129,8 @@ class RNN_Memoryless(RNN):
             outputs.append(o)
         o = torch.cat(outputs, 0) # (seq_len, bs, _)
 
-        # dim transformation: (seq_len, bs, d) -> (seq_len x bs, d)
-        o = o.contiguous()
-        o = o.view(-1, o.shape[2])
-
-        # run through prediction layer
-        o = self.h2o(o)
-        o = self.softmax(o)
-
-        # dim transformation
-        o = o.view(seq_len, bs, self.output_size)
-        
         return o, hidden # hidden is dummy here
     
-    def forward_old(self, x, hidden, input_lengths):
-        warnings.warn('deprecated', DeprecationWarning)                
-        # input of size seq_len x bs x d, padded sequences with input_lengths specified
-        # this model assumes one output at the end
-        seq_len, bs, d = x.shape
-
-        outputs = []
-        for i, l in enumerate(input_lengths):
-            o = self.get_model(l-1)(x[l-1, i].view(1, d))
-            outputs.append(o)
-        o = torch.cat(outputs, 0)
-        o = self.softmax(o)
-
-        return o, hidden # hidden is dummy here
-
 class RNN_Independent(RNN): # sharing strategy
     ''' independent: each time step assign a different model '''
     def custom_init(self):
@@ -255,7 +215,7 @@ class RNN_LSTM(RNN_Memory):
     def custom_init(self):
         self.model = self.base_model()
 
-    def forward(self, x, hidden, input_lengths):
+    def forward_core(self, x, hidden, input_lengths):
         seq_len, bs, _ = x.shape
         
         # change the padded data with variable length: save computation
@@ -265,17 +225,6 @@ class RNN_LSTM(RNN_Memory):
         # undo packing: second arg is input_lengths (we do not need)
         # o: seq_len x bs x d
         o, _ = torch.nn.utils.rnn.pad_packed_sequence(o)
-
-        # dim transformation: (seq_len, bs, d) -> (seq_len x bs, d)
-        o = o.contiguous()
-        o = o.view(-1, o.shape[2])
-
-        # run through prediction layer
-        o = self.h2o(o)
-        o = self.softmax(o)
-
-        # dim transformation
-        o = o.view(seq_len, bs, self.output_size)
 
         return o, hidden
 
