@@ -2,6 +2,7 @@ import torch, time
 from lib.utils import timeSince, AverageMeter, PrintTable
 import pprint
 import numpy as np
+import warnings
 
 class Train(object):
 
@@ -132,6 +133,7 @@ class Train(object):
                     'train_losses': self.all_losses
                 }, is_best)
 
+######################################## single output ################################
 class TrainMLP(Train):
 
     def train_step(self, x, y):
@@ -139,39 +141,144 @@ class TrainMLP(Train):
         self.optimizer.zero_grad()
         output = torch.nn.functional.log_softmax(self.net(x), dim=1)
         
-        loss = self.criterion(output, y)
+        loss = self.criterion(output, y.view(-1))
         loss.backward()
         
         self.optimizer.step()
         return output, loss.item()
 
-class TrainRNN(Train):
+class TrainRNN(Train): # todo: deprecate: to remove
 
     def train_step(self, x, y, x_lengths):
+        warnings.warn('deprecated, use TrainSORNN', DeprecationWarning)
         hidden = self.net.initHidden(batch_size=self.batch_size)
 
         self.optimizer.zero_grad()
         output, hidden = self.net(x, hidden, x_lengths)
 
-        loss = self.criterion(output, y)
+        loss = self.criterion(output, y.view(-1))
         loss.backward()
                         
         self.optimizer.step()
 
         return output, loss.item()
 
-class TrainMetaRNN(Train):
+class TrainMetaRNN(Train): # todo: deprecate: to remove
 
     def train_step(self, x, y, x_lengths):
+        warnings.warn('deprecated, use TrainSOMetaRNN', DeprecationWarning)        
         hidden = self.net.initHidden(batch_size=self.batch_size)
 
         self.optimizer.zero_grad()
         output, hidden = self.net(x, hidden, x_lengths)
-        loss = self.criterion(output, y)
+        loss = self.criterion(output, y.view(-1))
         loss.backward()
         self.net.after_backward()                      
         self.optimizer.step()
 
         return output, loss.item()
 
+######################################## multiple output ################################
+class TrainSORNN(Train): # single output rnn: to replace TrainRNN
 
+    def train_step(self, x, y, x_lengths):
+        hidden = self.net.initHidden(batch_size=self.batch_size)
+
+        self.optimizer.zero_grad()
+        output, hidden = self.net(x, hidden, x_lengths)
+
+        ################################################################        
+        # mask for appropriate output
+        bs = output.shape[1]
+        output = output[list(map(lambda l: l-1, x_lengths)), range(bs)]        
+        loss = self.criterion(output, y.view(-1))
+        ################################################################
+        
+        loss.backward()
+        self.optimizer.step()
+
+        return output, loss.item()
+
+class TrainSOMetaRNN(Train): # to replace TrainMetaRNN
+
+    def train_step(self, x, y, x_lengths):
+        hidden = self.net.initHidden(batch_size=self.batch_size)
+
+        self.optimizer.zero_grad()
+        output, hidden = self.net(x, hidden, x_lengths)
+
+        ################################################################
+        # mask for appropriate output
+        bs = output.shape[1]
+        output = output[list(map(lambda l: l-1, x_lengths)), range(bs)]        
+        loss = self.criterion(output, y.view(-1))
+        ################################################################
+        
+        loss.backward()
+        self.net.after_backward()                      
+        self.optimizer.step()
+
+        return output, loss.item()
+
+class TrainMORNN(Train): 
+
+    def train_step(self, x, y, x_lengths):
+        hidden = self.net.initHidden(batch_size=self.batch_size)
+
+        self.optimizer.zero_grad()
+        output, hidden = self.net(x, hidden, x_lengths)
+
+        ###################################################################
+        ## mask for appropriate output: (seq_len, bs, output_size)
+        # flat labels and predictions
+        y = y.view(-1) # seq_len * bs
+        yhat = output.view(-1, self.net.output_size) # (seq_len * bs, output_size)
+
+        # create mask
+        masks = [torch.ones(l) for l in x_lengths]
+        mask = torch.nn.utils.rnn.pad_sequence(masks, padding_value=0).view(-1)
+        mask = mask.nonzero().squeeze()
+
+        # select out rows of yhat and y that
+        yhat = yhat[mask]
+        y = y[mask]
+        
+        loss = self.criterion(yhat, y)
+        ###################################################################
+        
+        loss.backward()
+        self.optimizer.step()
+
+        return output, loss.item()
+
+class TrainMOMetaRNN(Train): # to replace TrainMetaRNN
+
+    def train_step(self, x, y, x_lengths):
+        hidden = self.net.initHidden(batch_size=self.batch_size)
+
+        self.optimizer.zero_grad()
+        output, hidden = self.net(x, hidden, x_lengths)
+
+        ##############################################################
+        ## mask for appropriate output: (seq_len, bs, output_size)
+        # flat labels and predictions
+        y = y.view(-1) # seq_len * bs
+        yhat = output.view(-1, self.net.output_size) # (seq_len * bs, output_size)
+
+        # create mask
+        masks = [torch.ones(l) for l in x_lengths]
+        mask = torch.nn.utils.rnn.pad_sequence(masks, padding_value=0).view(-1)
+        mask = mask.nonzero().squeeze()
+
+        # select out rows of yhat and y that
+        yhat = yhat[mask]
+        y = y[mask]
+        
+        loss = self.criterion(yhat, y)
+        ##############################################################
+
+        loss.backward()
+        self.net.after_backward()                      
+        self.optimizer.step()
+
+        return output, loss.item()

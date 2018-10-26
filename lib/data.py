@@ -77,15 +77,14 @@ class SequenceData(Data):
             xs.append(x)
             ys.append(y)
 
-        # pad tensors
+        # pad both x and y tensors: 
         sort_order = sorted(range(len(xs)), key=lambda i: len(xs[i]), reverse=True)
         xs = [xs[i] for i in sort_order]
         ys = [ys[i] for i in sort_order]
         x_lengths = [len(l) for l in xs]
         max_length = x_lengths[0]
         xs = torch.nn.utils.rnn.pad_sequence(xs)
-        #xs = torch.cat([pad_timeseries_tensor(x, max_length) for x in xs], 1)
-        ys = torch.cat(ys)
+        ys = torch.nn.utils.rnn.pad_sequence(ys) # seq_len x bs
         return xs, ys, x_lengths
                                 
 #######################################################################################

@@ -11,13 +11,18 @@ class Evaluation(object):
         # only for classification problem
         confusion = torch.zeros(n_categories, n_categories)
 
-        # Go through a bunch of examples and record which are correctly guessed
+        # Go through a bunch of examples
         for i in range(n_confusion):
             d = self.data.next_batch(1)
-            y = d[1]
-            output = self.net.eval_forward(*d)
-            _, ans = torch.max(output, 1)
-            confusion[y.item()][ans.item()] += 1
+            y = d[1] # seq_len x bs which is seq_len x 1
+            output = self.net.eval_forward(*d) # seq_len x bs x output_size
+            if len(output.shape) < 3: # seq_len x bs
+                max_dim = 1
+            else:
+                max_dim = 2
+            _, ans = torch.max(output, max_dim)
+            for j in range(len(y)):
+                confusion[y[j].item()][ans[j].item()] += 1
         return confusion
 
 def plot_confusion(confusion):
