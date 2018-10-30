@@ -1,8 +1,9 @@
 import numpy as np
 import random
 import torch
+from torch.utils.data import Dataset
 
-class Data(object):
+class Data(Dataset):
 
     def __init__(self, dataset):
         self.dset = dataset # torch dataset
@@ -35,6 +36,9 @@ class FlatData(Data):
     def __len__(self):
         return len(self.dset)
 
+    def __getitem__(self, index):
+        return self.get(index)
+    
     def _get_batch(self, chosen):
         xs = []
         ys = []
@@ -63,6 +67,12 @@ class SequenceData(Data):
     def set_seq_length(self, min_length, max_length):
         self.min_length = min_length
         self.max_length = max_length
+
+    def __len__(self): # this is dummy as sequence data is generated on the fly
+        return len(self.dset)
+        
+    def __getitem__(self, index):
+        return _random_one()
 
     def _random_one(self): # random one instance
         raise NotImplementedError()
@@ -107,7 +117,7 @@ class MNIST_add_data(SequenceData):
         xs = xs.view(length, -1) # (nseq, w*h)
         return xs, ys.sum().unsqueeze(0) % 10
 
-class TwoStateData(SequenceData):
+class StateData(SequenceData):
     ''' y is not only depend on x, but also on a time related hidden state'''
     def state_transition(self, s, t, x):
         # next state depends on time and current covariate and current state
@@ -139,11 +149,15 @@ class TwoStateData(SequenceData):
         xs = xs.view(length, -1) # (nseq, w*h)
         # print(states)
         return xs, ys
-    
-class TwoStateMNISTData(TwoStateData):
-    ''' y is not only depend on x, but also on a time related hidden state'''
+
+########## making lstm fail #############
+class TwoStateMNISTData(StateData):
+    ''' two state transition model with an absorbing state'''
+    def set_p(self, p):
+        self.p = p
+        
     def state_transition(self, s, t, x):
-        p = 0.1
+        p = self.p or 0.1
         if s == 1:
             return 1
         else:
@@ -158,6 +172,39 @@ class TwoStateMNISTData(TwoStateData):
         else:
             return (10 - y) % 10
         
+class AlternateStateMNISTData(StateData):
+    '''alternate between models to use'''
+    def state_transition(self, s, t, x):
+        return 1 - s
+
+    def set_target(self, y, s):
+        if s == 0:
+            return y
+        else:
+            return (10 - y) % 10
+
+class ShiftStateMNISTData(StateData):
+    '''all time steps have a differnet model'''
+    def set_offset(self, offset):
+        self.offset = offset # offset is list
+        
+    def state_transition(self, s, t, x):
+        return t + 1
+
+    def set_target(self, y, s):
+        return (y + self.offset[s]) % 10
+
+class StateMNISTData(StateData):
+    '''all time steps have a differnet model'''
+    def set_target_function(self, target_function):
+        self.target_function = target_function
+        
+    def state_transition(self, s, t, x):
+        return t + 1
+
+    def set_target(self, y, s):
+        return self.target_function[s][y.item()] % 10
+    
 
         
         

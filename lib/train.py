@@ -1,32 +1,44 @@
 import torch, time
-from lib.utils import timeSince, AverageMeter, PrintTable
+from lib.utils import timeSince, AverageMeter, PrintTable, smooth
 import pprint
 import numpy as np
 import warnings
+import shutil
 
 class Train(object):
 
     def __init__(self, net, optimizer, criterion, data,
                  batch_size=32, n_iters=None,
-                 n_print=100, n_save=30,
+                 n_print=100, n_save=10,
                  n_plot=1000,
                  save_filename='models/checkpoint.pth.tar',
-                 best_save_filename=None):
+                 best_save_filename=None,
+                 val_data=None,
+                 n_iters_val=None,
+                 use_gpu=False): # specifies which gpu to use, if False, don't use
 
         self.start_iter = 1
         if n_iters is None:
             n_iters = int(100000 / batch_size)
+        if n_iters_val is None:
+            n_iters_val = 100 * batch_size
 
         self.n_iters = n_iters
+        self.n_iters_val = n_iters_val
         self.batch_size = batch_size        
         self.print_every = int(n_iters / n_print)
         self.plot_every = int(n_iters / n_plot)
-        self.save_every = int(n_iters / n_save)        
+        self.save_every = int(n_iters / n_save)
+        self.use_gpu = use_gpu
             
         self.net = net
+        if self.use_gpu is not False:
+            self.net.cuda()
+        
         self.optimizer = optimizer
         self.criterion = criterion
         self.data = data
+        self.val_data = val_data
 
         self.save_filename = save_filename
         if best_save_filename is None:
@@ -46,12 +58,13 @@ class Train(object):
         
     def clear_logs(self):
         self.all_losses = []
+        self.val_accs = []
         self.best_acc = None
 
     def save_checkpoint(self, state, is_best):
         torch.save(state, self.save_filename)
         if is_best:
-            shutil.copyfile(filename, self.best_save_filename)
+            shutil.copyfile(self.save_filename, self.best_save_filename)
 
     def load_checkpoint(self, load_filename):
         print("=> loading checkpoint '{}'".format(load_filename))
@@ -61,18 +74,56 @@ class Train(object):
         self.start_iter = checkpoint['niter']
         self.best_acc = checkpoint['best_acc']
         self.all_losses = checkpoint['train_losses']
+        self.val_accs = checkpoint['val_accs']        
         print("=> loaded checkpoint '{}' (iteration {})"
               .format(load_filename, checkpoint['niter']))
 
     def smooth_loss(self, step=None):
         if step is None:
             step = self.print_every
-        out = np.convolve(self.all_losses, np.ones(step), 'valid') / step
-        return out
+        return smooth(self.all_losses, step=step)
+
+    def smooth_valacc(self, step=None):
+        if step is None:
+            step = self.print_every
+        return smooth(self.val_accs, step=step)
     
     def train_step(self):
         raise NotImplementedError()
 
+    def val_acc(self):
+
+        # return avg validation accuracy
+        if self.val_data is None:
+            return None
+
+        print('==> evaluating validation accuracy')        
+        acc = AverageMeter()
+        for iter in range(self.n_iters_val):
+            # d is (x, y) for mlp, (x, y, x_lengths) for rnn
+            d = self.data.next_batch(1) # 1 so don't need to mask out
+            d = list(d)            
+            if self.use_gpu is not False:
+                d[0], d[1] = d[0].cuda(), d[1].cuda()
+            y = d[1] # (seq_len, bs)
+
+            output = self.net.eval_forward(*d) # seq_len x bs x output_size
+            if len(output.shape) < 3: # seq_len x bs, single output
+                max_dim = 1
+            else: # seq_len x bs x output_size, multi output
+                max_dim = 2
+            _, ans = torch.max(output, max_dim)
+
+            n = len(y)
+            for j in range(n):
+                if y[j].item() == ans[j].item():
+                    acc.update(1) # correct
+                else:
+                    acc.update(0) # incorrect
+        print('==> validation accuracy is %d%%' % (acc.avg * 100))
+        self.net.train()
+        return acc.avg
+        
     def train(self):
         self.net.train()
         losses = AverageMeter()
@@ -90,16 +141,19 @@ class Train(object):
             data_time.update(time.time() - end)
             
             # d is (x, y) for mlp, (x, y, x_lengths) for rnn
-            d = self.data.next_batch(self.batch_size) 
+            d = self.data.next_batch(self.batch_size)
+            d = list(d)            
+            if self.use_gpu is not False:
+                d[0], d[1] = d[0].cuda(), d[1].cuda()
             output, loss = self.train_step(*d)
 
-            # todo: the second arg should really valid sizes            
+            # note: the second arg should really valid sizes, but here
+            # the expectation should be correct
             losses.update(loss, self.batch_size)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
-            end = time.time()
-
+            #################### note keeping ###########################
             # Print iter number, loss, etc.
             if iter % self.print_every == 0:
                 table_printer.print([iter,
@@ -109,12 +163,18 @@ class Train(object):
                                      data_time.avg,
                                      losses.avg])
                 #print('%d %d%% (%s %.3f %.3f) %.4f ' % ())
+
             if iter % self.plot_every == 0:
                 # Add current loss avg to list of losses
                 self.all_losses.append(losses.val)
+                if len(self.val_accs) == 0:
+                    self.val_accs.append(self.val_acc())
+                else:
+                    self.val_accs.append(self.val_accs[-1])
 
             if iter % self.save_every == 0 or iter == self.n_iters:
-                val_acc = None # todo: evaluate using validation set here
+                val_acc = self.val_acc()
+                self.val_accs.append(val_acc)
                 is_best = False
                 if val_acc is not None:
                     if self.best_acc is None:
@@ -130,8 +190,12 @@ class Train(object):
                     'state_dict': self.net.state_dict(),
                     'best_acc': self.best_acc,
                     'optimizer': self.optimizer.state_dict(),
-                    'train_losses': self.all_losses
+                    'train_losses': self.all_losses,
+                    'val_accs': self.val_accs
                 }, is_best)
+            #################### note keeping end ###########################
+            
+            end = time.time()                
 
 ######################################## derived models ################################
 class TrainMLP(Train):
@@ -151,6 +215,7 @@ class TrainSORNN(Train): # single output rnn
 
     def train_step(self, x, y, x_lengths):
         hidden = self.net.initHidden(batch_size=self.batch_size)
+
 
         self.optimizer.zero_grad()
         output, hidden = self.net(x, hidden, x_lengths)

@@ -1,4 +1,5 @@
 import time, math, torch, shutil
+import numpy as np
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -32,7 +33,17 @@ class PrintTable(object):
 
     def print(self, row):
         print( "|".join([self._format(x) for x in row]) )
-                
+
+def smooth(sequence, step=1):
+    out = np.convolve(sequence, np.ones(step), 'valid') / step
+    return out
+
+def random_split_dataset(dataset, proportions):
+    n = len(dataset)
+    ns = [int(math.floor(p*n)) for p in proportions]
+    ns[-1] += n - sum(ns)
+    return torch.utils.data.random_split(dataset, ns)
+    
 def timeSince(since):
     now = time.time()
     s = now - since

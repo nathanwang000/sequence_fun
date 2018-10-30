@@ -3,9 +3,10 @@ import numpy as np
 
 class Evaluation(object):
 
-    def __init__(self, net, data):
+    def __init__(self, net, data, use_gpu=False):
         self.net = net
         self.data = data
+        self.use_gpu = use_gpu
 
     def confusion(self, n_categories, n_confusion=10000):
         # only for classification problem
@@ -13,12 +14,17 @@ class Evaluation(object):
 
         # Go through a bunch of examples
         for i in range(n_confusion):
+
             d = self.data.next_batch(1)
+            d = list(d)            
+            if self.use_gpu is not False:
+                d[0], d[1] = d[0].cuda(self.use_gpu), d[1].cuda(self.use_gpu)
+
             y = d[1] # seq_len x bs which is seq_len x 1
             output = self.net.eval_forward(*d) # seq_len x bs x output_size
-            if len(output.shape) < 3: # seq_len x bs
+            if len(output.shape) < 3: # seq_len x bs, single output
                 max_dim = 1
-            else:
+            else: # seq_len x bs x output_size, multi output
                 max_dim = 2
             _, ans = torch.max(output, max_dim)
             for j in range(len(y)):
