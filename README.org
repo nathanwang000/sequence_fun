@@ -9,6 +9,10 @@ framework for modeling the data. In stage two, we carefully reproduce result
 reported in the literature. In stage 3, we develop and tune models to beat state of the
 art.
 
+* what to run
+
+  see python_script.py for pointers
+
 * TODO Understanding the data
   
   - [X] read through [[./mimic3/README.md][documentation]]

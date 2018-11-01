@@ -36,21 +36,26 @@ parser.add_argument('--nhidden', default=30, type=int,
                     help='number of hidden units')
 parser.add_argument('--use_gpu', action='store_true',
                     help='whether or not use gpu')
-parser.add_argument('--save_dir', default='models', type=str,
-                    help='directory to save')
-parser.add_argument('--min_length', default=5, type=int,
-                    help='minimum sequence length ')
-parser.add_argument('--max_length', default=5, type=int,
-                    help='maximum sequence length ')
+parser.add_argument('--smdir', default='models', type=str,
+                    help='directory to save model')
+parser.add_argument('--sddir', default='sequence_data', type=str,
+                    help='directory to save data')
 parser.add_argument('--nshared', default=2, type=int,
                     help='number of shared models')
+parser.add_argument('--ntr', default=5000, type=int,
+                    help='number of training data')
+parser.add_argument('--niters', default=4000, type=int, metavar='N',
+                    help='number of total iterations to run')
+parser.add_argument('--batch_size', default=32, type=int, metavar='B',
+                    help='batch_size')
 
 args = parser.parse_args()
 
 ################################## setting ############################################
 n_hidden = args.nhidden # 50, 300
 n_categories = 10
-os.system('mkdir -p %s' % args.save_dir)
+os.system('mkdir -p %s' % args.smdir)
+os.system('mkdir -p %s' % args.sddir)
 
 if args.seed is not None:
     random.seed(args.seed)
@@ -63,9 +68,11 @@ if args.seed is not None:
                   'from checkpoints.')
     
 '''StateMNISTData'''
-min_length, max_length = args.min_length, args.max_length
-target_function = torch.cat([torch.randperm(n_categories).unsqueeze(0) \
-                             for _ in range(max_length)], 0)
+min_length, max_length = 1, 9
+target_function = [torch.randperm(n_categories) \
+                   for _ in range(math.ceil(max_length / 3))]
+# repeat 3 times
+target_function = [item for item in target_function for _ in range(3)]
 
 ################################### get data ###########################################
 root = './mnist_data'
@@ -80,18 +87,27 @@ train_proportion = 0.8
 train_set, val_set = random_split_dataset(trainval_set, [train_proportion, 1-train_proportion])
 test_set = dset.MNIST(root=root, train=False, transform=trans, download=True)
 
+savename_tr = os.path.join(args.sddir, 'train.pkl')
+savename_val = os.path.join(args.sddir, 'val.pkl')
+savename_te = os.path.join(args.sddir, 'test.pkl')
+n_tr = args.ntr
+n_val = 3000 # don't need to vary
+n_te = 10000 # don't need to vary
 
 train_data = StateMNISTData(train_set)
 train_data.set_seq_length(min_length=min_length, max_length=max_length)
 train_data.set_target_function(target_function)
+train_data.save_data(savename_tr, n_tr)
 
 val_data = StateMNISTData(val_set)
 val_data.set_seq_length(min_length=min_length, max_length=max_length)
 val_data.set_target_function(target_function)
+val_data.save_data(savename_val, n_val)
 
 test_data = StateMNISTData(test_set)
 test_data.set_seq_length(min_length=min_length, max_length=max_length)
 test_data.set_target_function(target_function)
+test_data.save_data(savename_te, n_te)
 
 ######################################### run models ###################################
 def run_models(args):
@@ -109,10 +125,10 @@ def run_models(args):
         net.setKT(args.nshared, max_length)
         savename = 'mlp_mow.pth.tar'
     elif args.arch == 'RNN_SLSTM':
-        net.set_shared_groups([[0,1,2], [3, 4]])
+        net.set_shared_groups([[0,1,2], [3, 4, 5]])
         savename = 'lstm_shared.pth.tar'
     elif args.arch == 'RNN_SMLP':
-        net.set_shared_groups([[0,1,2], [3, 4]])
+        net.set_shared_groups([[0,1,2], [3, 4, 5]])
         savename = 'mlp_shared.pth.tar'
     elif args.arch == 'RNN_ILSTM':
         net.set_max_length(max_length)
@@ -121,12 +137,14 @@ def run_models(args):
         net.set_max_length(max_length)
         savename = 'mlp_independent.pth.tar'
         
-    savename = os.path.join(args.save_dir, savename)
+    savename = os.path.join(args.smdir, savename)
     optimizer = torch.optim.Adam(net.parameters())
     criterion = nn.NLLLoss()
 
     trainer = TrainMORNN(net, optimizer, criterion, train_data,
-                         save_filename=savename, val_data=val_data, use_gpu=use_gpu)
+                         save_filename=savename, val_data=val_data,
+                         use_gpu=use_gpu, n_iters=args.niters,
+                         batch_size=args.batch_size)
     if os.path.exists(savename):
         trainer.load_checkpoint(savename)
 

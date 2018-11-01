@@ -21,7 +21,10 @@ class Train(object):
         if n_iters is None:
             n_iters = int(100000 / batch_size)
         if n_iters_val is None:
-            n_iters_val = 100 * batch_size
+            if val_data is None:
+                n_iters_val = 100 * batch_size
+            else:
+                n_iters_val = len(val_data)
 
         self.n_iters = n_iters
         self.n_iters_val = n_iters_val
@@ -101,7 +104,7 @@ class Train(object):
         acc = AverageMeter()
         for iter in range(self.n_iters_val):
             # d is (x, y) for mlp, (x, y, x_lengths) for rnn
-            d = self.data.next_batch(1) # 1 so don't need to mask out
+            d = self.val_data.next_batch(1) # 1 so don't need to mask out
             d = list(d)            
             if self.use_gpu is not False:
                 d[0], d[1] = d[0].cuda(), d[1].cuda()

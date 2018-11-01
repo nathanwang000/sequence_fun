@@ -1,16 +1,20 @@
 import numpy as np
-import random
-import torch
+import random, os
+import torch, warnings
+from sklearn.externals import joblib
 from torch.utils.data import Dataset
 
 class Data(Dataset):
 
     def __init__(self, dataset):
         self.dset = dataset # torch dataset
-        self.order = np.arange(len(self.dset))
-        
-        self.custom_init()
+        self.reset()
 
+    def reset(self):
+        self.order = np.arange(len(self.dset))
+        self.current_index = 0
+        self.custom_init()
+        
     def custom_init(self):
         raise NotImplementedError()
 
@@ -29,9 +33,6 @@ class Data(Dataset):
         raise NotImplementedError()        
     
 class FlatData(Data):
-
-    def custom_init(self):
-        self.current_index = 0
 
     def __len__(self):
         return len(self.dset)
@@ -58,17 +59,52 @@ class FlatData(Data):
         self.current_index = (self.current_index + batch_size) % len(self)
         return xs, ys
 
+class LoadedSequenceData(Dataset):
+
+    def __init__(self, data_path):
+        self.data_path = data_path
+        self.xs, self.ys = joblib.load(data_path)
+
+    def __len__(self):
+        return len(self.ys)
+
+    def __getitem__(self, idx):
+        return self.xs[idx], self.ys[idx]
+
 class SequenceData(Data):
     '''sequence synthetic dataset'''
     def custom_init(self):
         self.min_length = 1
         self.max_length = 3
+        self.load_path = None # if loaded
 
     def set_seq_length(self, min_length, max_length):
         self.min_length = min_length
         self.max_length = max_length
 
-    def __len__(self): # this is dummy as sequence data is generated on the fly
+    def save_data(self, savename, n, override_existing=False):
+        file_exist = os.path.exists(savename)
+        if file_exist:
+            warnings.warn("%s exist, override: %r" % (savename, override_existing))
+
+        if not file_exist or override_existing:
+            print("==>save data of size %d in %s" % (n, savename))
+            # generate on the fly        
+            xs, ys = self._generate_unpadded_data(n, on_the_fly=True) 
+            joblib.dump((xs, ys), savename)
+            print("==>save data done")
+
+        self.load_data(savename)        
+
+    def load_data(self, load_path):
+        print('==>load data %s' % load_path)
+        self.dset = LoadedSequenceData(load_path)
+        self.reset()
+        self.load_path = load_path 
+        print('==>load data of size %d done' % len(self.dset))
+        
+    def __len__(self):
+        # this is dummy as sequence data is generated on the fly        
         return len(self.dset)
         
     def __getitem__(self, index):
@@ -77,17 +113,8 @@ class SequenceData(Data):
     def _random_one(self): # random one instance
         raise NotImplementedError()
 
-    def next_batch(self, batch_size):
-        '''return a random batch'''
-        xs = []
-        ys = []
-
-        for _ in range(batch_size):
-            x, y = self._random_one()
-            xs.append(x)
-            ys.append(y)
-
-        # pad both x and y tensors: 
+    def _sort_length_pad(self, xs, ys):
+        '''sort length from large to small and pad xs and ys'''
         sort_order = sorted(range(len(xs)), key=lambda i: len(xs[i]), reverse=True)
         xs = [xs[i] for i in sort_order]
         ys = [ys[i] for i in sort_order]
@@ -96,6 +123,30 @@ class SequenceData(Data):
         xs = torch.nn.utils.rnn.pad_sequence(xs)
         ys = torch.nn.utils.rnn.pad_sequence(ys) # seq_len x bs
         return xs, ys, x_lengths
+
+    def _generate_unpadded_data(self, batch_size, on_the_fly=True):
+        '''return a random batch'''
+        xs = []
+        ys = []
+
+        for _ in range(batch_size):
+            if on_the_fly:
+                x, y = self._random_one()
+            else:
+                x, y = self.get(self.current_index)
+                self.current_index = self.current_index + 1
+                if self.current_index >= len(self.dset):
+                    self.current_index = self.current_index % len(self.dset)
+                    self.random_shuffle()
+            xs.append(x)
+            ys.append(y)
+        return xs, ys
+
+    def next_batch(self, batch_size):
+        on_the_fly = self.load_path is None
+        xs, ys = self._generate_unpadded_data(batch_size, on_the_fly)
+        # pad both x and y tensors:
+        return self._sort_length_pad(xs, ys)
                                 
 #######################################################################################
 class MNIST_add_data(SequenceData):
@@ -194,8 +245,8 @@ class ShiftStateMNISTData(StateData):
     def set_target(self, y, s):
         return (y + self.offset[s]) % 10
 
-class StateMNISTData(StateData):
-    '''all time steps have a differnet model'''
+class StateMNISTData(StateData): 
+    '''a generalization of shiftstatemnistdata'''
     def set_target_function(self, target_function):
         self.target_function = target_function
         
@@ -205,6 +256,12 @@ class StateMNISTData(StateData):
     def set_target(self, y, s):
         return self.target_function[s][y.item()] % 10
     
-
+''' examples of state mnist data
+# 1. sharing 3 groups of data
+min_length, max_length = 1, 9
+target_function = [torch.randperm(n_categories) \
+                   for _ in range(math.ceil(max_length / 3))]
+target_function = [item for item in target_function for _ in range(3)]
+'''
         
         
