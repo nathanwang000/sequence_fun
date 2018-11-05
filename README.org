@@ -9,9 +9,11 @@ framework for modeling the data. In stage two, we carefully reproduce result
 reported in the literature. In stage 3, we develop and tune models to beat state of the
 art.
 
-* what to run
+* example command to run
 
-  see python_script.py for pointers
+  #+BEGIN_SRC bash
+  python python_script.py --debug --exp partial_sum 2>error
+  #+END_SRC
 
 * TODO Understanding the data
   

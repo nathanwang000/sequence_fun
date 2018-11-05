@@ -239,6 +239,8 @@ class RNN_MoW(RNN): # sharing strategy
 
         for t, model in enumerate(self.models):
             for (name, p), params in zip(model.named_parameters(), params_list):
+                if p.grad is None: # sometimes t are large so that not updated yet
+                    continue
                 # wasteful computation: todo: save this in get_model
                 c = self._combine_weights(params, t)
                 c.backward(p.grad)

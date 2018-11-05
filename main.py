@@ -9,19 +9,17 @@ import torch.nn.functional as F
 import torch.optim as optim
 import time
 import math, tqdm
-from lib.data import FlatData, MNIST_add_data
+from lib.data import FlatData, MNIST_add_data, StateMNISTData
 from lib.utils import timeSince
 from lib.utils import random_split_dataset
 import random
 import torch.backends.cudnn as cudnn
 import warnings, argparse
-from lib.data import StateMNISTData
-from lib.train import TrainMORNN
-from lib.model import RNN_LSTM, RNN_MLP, RNN_LSTM_MoW, RNN_SLSTM, RNN_ILSTM, \
-    RNN_IMLP, RNN_MLP_MoW, RNN_SMLP
+from lib.experiment import SYNTHETIC_EXPERIMENTS
 
 model_names = ['RNN_LSTM', 'RNN_LSTM_MoW', 'RNN_SLSTM', 'RNN_ILSTM', \
                'RNN_MLP', 'RNN_IMLP', 'RNN_MLP_MoW', 'RNN_SMLP']
+exp_names = SYNTHETIC_EXPERIMENTS.keys()
 
 # parse arguments
 parser = argparse.ArgumentParser(description='PyTorch RNN multi task training')
@@ -38,22 +36,27 @@ parser.add_argument('--use_gpu', action='store_true',
                     help='whether or not use gpu')
 parser.add_argument('--smdir', default='models', type=str,
                     help='directory to save model')
-parser.add_argument('--sddir', default='sequence_data', type=str,
-                    help='directory to save data')
-parser.add_argument('--nshared', default=2, type=int,
-                    help='number of shared models')
-parser.add_argument('--ntr', default=5000, type=int,
-                    help='number of training data')
-parser.add_argument('--niters', default=4000, type=int, metavar='N',
-                    help='number of total iterations to run')
 parser.add_argument('--batch_size', default=32, type=int, metavar='B',
                     help='batch_size')
+parser.add_argument('--niters', default=8000, type=int, metavar='N',
+                    help='number of total iterations to run')
+parser.add_argument('--n_save_model', default=10, type=int,
+                    help='number of model save and validation eval in trainer')
+parser.add_argument('--nshared', default=2, type=int,
+                    help='number of shared models (for MoW)')
+
+####################### data generate parameters ########################
+parser.add_argument('--sddir', default='sequence_data', type=str,
+                    help='directory to save data')
+parser.add_argument('--ntr', default=5000, type=int,
+                    help='number of training data')
+parser.add_argument('--exp', default="scarce", type=str,
+                    choices=exp_names,
+                    help='experiment name to run')
 
 args = parser.parse_args()
 
 ################################## setting ############################################
-n_hidden = args.nhidden # 50, 300
-n_categories = 10
 os.system('mkdir -p %s' % args.smdir)
 os.system('mkdir -p %s' % args.sddir)
 
@@ -67,16 +70,8 @@ if args.seed is not None:
                   'You may see unexpected behavior when restarting '
                   'from checkpoints.')
     
-'''StateMNISTData'''
-min_length, max_length = 1, 9
-target_function = [torch.randperm(n_categories) \
-                   for _ in range(math.ceil(max_length / 3))]
-# repeat 3 times
-target_function = [item for item in target_function for _ in range(3)]
-
 ################################### get data ###########################################
 root = './mnist_data'
-use_gpu = args.use_gpu
 if not os.path.exists(root):
     os.mkdir(root)
     
@@ -94,60 +89,11 @@ n_tr = args.ntr
 n_val = 3000 # don't need to vary
 n_te = 10000 # don't need to vary
 
-train_data = StateMNISTData(train_set)
-train_data.set_seq_length(min_length=min_length, max_length=max_length)
-train_data.set_target_function(target_function)
-train_data.save_data(savename_tr, n_tr)
+experiment = SYNTHETIC_EXPERIMENTS[args.exp]
 
-val_data = StateMNISTData(val_set)
-val_data.set_seq_length(min_length=min_length, max_length=max_length)
-val_data.set_target_function(target_function)
-val_data.save_data(savename_val, n_val)
-
-test_data = StateMNISTData(test_set)
-test_data.set_seq_length(min_length=min_length, max_length=max_length)
-test_data.set_target_function(target_function)
-test_data.save_data(savename_te, n_te)
+train_data = experiment.gen_data(train_set, savename_tr, n_tr)
+val_data = experiment.gen_data(val_set, savename_val, n_val)
+test_data = experiment.gen_data(test_set, savename_te, n_te)
 
 ######################################### run models ###################################
-def run_models(args):
-    net = eval(args.arch)(784, n_hidden, n_categories)
-
-    print(args)
-    if args.arch == 'RNN_LSTM':
-        savename = 'lstm.pth.tar'
-    elif args.arch == 'RNN_MLP':
-        savename = 'mlp.pth.tar'        
-    elif args.arch == 'RNN_LSTM_MoW':
-        net.setKT(args.nshared, max_length)
-        savename = 'lstm_mow.pth.tar'
-    elif args.arch == 'RNN_MLP_MoW':
-        net.setKT(args.nshared, max_length)
-        savename = 'mlp_mow.pth.tar'
-    elif args.arch == 'RNN_SLSTM':
-        net.set_shared_groups([[0,1,2], [3, 4, 5]])
-        savename = 'lstm_shared.pth.tar'
-    elif args.arch == 'RNN_SMLP':
-        net.set_shared_groups([[0,1,2], [3, 4, 5]])
-        savename = 'mlp_shared.pth.tar'
-    elif args.arch == 'RNN_ILSTM':
-        net.set_max_length(max_length)
-        savename = 'lstm_independent.pth.tar'
-    elif args.arch == 'RNN_IMLP':
-        net.set_max_length(max_length)
-        savename = 'mlp_independent.pth.tar'
-        
-    savename = os.path.join(args.smdir, savename)
-    optimizer = torch.optim.Adam(net.parameters())
-    criterion = nn.NLLLoss()
-
-    trainer = TrainMORNN(net, optimizer, criterion, train_data,
-                         save_filename=savename, val_data=val_data,
-                         use_gpu=use_gpu, n_iters=args.niters,
-                         batch_size=args.batch_size)
-    if os.path.exists(savename):
-        trainer.load_checkpoint(savename)
-
-    trainer.train()
-
-run_models(args)
+experiment.run(args, train_data, val_data)

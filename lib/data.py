@@ -170,35 +170,42 @@ class MNIST_add_data(SequenceData):
 
 class StateData(SequenceData):
     ''' y is not only depend on x, but also on a time related hidden state'''
-    def state_transition(self, s, t, x):
+    def state_transition(self, s, t, x, y):
         # next state depends on time and current covariate and current state
         raise NotImplementedError()
 
+    def debug_mode(self, debug=True):
+        self.debug = debug
+    
     def set_target(self, y, s):
         raise NotImplementedError()
+
+    def init_state(self):
+        return 0 # initial state
         
     def _random_one(self):
         # randomly generate one example
         length = np.random.randint(self.min_length, self.max_length+1)
         chosen = np.random.choice(len(self.dset), length)
 
-        state = 0
+        state = self.init_state()
         states = []
         xs = []
         ys = []
         for t, c in enumerate(chosen):
             states.append(state)
-            x, y = self.get(c)
+            x, orig_y = self.get(c)
             xs.append(x)
-            y = self.set_target(y, state)
+            y = self.set_target(orig_y, state)
             ys.append(y.unsqueeze(0))
-            state = self.state_transition(state, t, x)
+            state = self.state_transition(state, t, x, orig_y)
 
         xs = torch.cat(xs, 0) # (nseq, w, h)
         ys = torch.cat(ys)
             
         xs = xs.view(length, -1) # (nseq, w*h)
-        # print(states)
+        if hasattr(self, 'debug') and self.debug is True:
+            print('states:', states)
         return xs, ys
 
 ########## making lstm fail #############
@@ -207,7 +214,7 @@ class TwoStateMNISTData(StateData):
     def set_p(self, p):
         self.p = p
         
-    def state_transition(self, s, t, x):
+    def state_transition(self, s, t, x, y):
         p = self.p or 0.1
         if s == 1:
             return 1
@@ -225,7 +232,7 @@ class TwoStateMNISTData(StateData):
         
 class AlternateStateMNISTData(StateData):
     '''alternate between models to use'''
-    def state_transition(self, s, t, x):
+    def state_transition(self, s, t, x, y):
         return 1 - s
 
     def set_target(self, y, s):
@@ -239,7 +246,7 @@ class ShiftStateMNISTData(StateData):
     def set_offset(self, offset):
         self.offset = offset # offset is list
         
-    def state_transition(self, s, t, x):
+    def state_transition(self, s, t, x, y):
         return t + 1
 
     def set_target(self, y, s):
@@ -250,11 +257,37 @@ class StateMNISTData(StateData):
     def set_target_function(self, target_function):
         self.target_function = target_function
         
-    def state_transition(self, s, t, x):
+    def state_transition(self, s, t, x, y):
         return t + 1
 
     def set_target(self, y, s):
         return self.target_function[s][y.item()] % 10
+
+class PartialSumStateMNISTData(StateData): 
+    '''statemnistdata with memory, does the partial sum task with share cycle'''
+    def set_share_cycle(self, n):
+        self.share_cycle = n
+
+    def set_target_function(self, target_function):
+        self.target_function = target_function
+
+    def init_state(self):
+        return 0, 0 # (time, partial sum)
+    
+    def state_transition(self, s, t, x, y):
+        # output next state
+        time, ps = s
+        next_ps = (ps + y.item()) % 10
+        if hasattr(self, 'share_cycle'):
+            if t % self.share_cycle == self.share_cycle - 1:
+                next_ps = 0
+        return t + 1,  next_ps
+
+    def set_target(self, y, s):
+        t, ps = s
+        if hasattr(self, 'debug') and self.debug:
+            return (ps + y) % 10        
+        return (ps + self.target_function[t][y.item()]) % 10
     
 ''' examples of state mnist data
 # 1. sharing 3 groups of data

@@ -4,6 +4,7 @@ import pprint
 import numpy as np
 import warnings
 import shutil
+from torch.optim import lr_scheduler
 
 class Train(object):
 
@@ -15,8 +16,16 @@ class Train(object):
                  best_save_filename=None,
                  val_data=None,
                  n_iters_val=None,
+                 lr_decay_factor=0.1,
                  use_gpu=False): # specifies which gpu to use, if False, don't use
 
+        if optimizer is not None:
+            self.lr_decay_factor = lr_decay_factor
+            self.scheduler = lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                            'max', patience=5,
+                                                            verbose=True,
+                                                            factor=lr_decay_factor)
+        
         self.start_iter = 1
         if n_iters is None:
             n_iters = int(100000 / batch_size)
@@ -74,6 +83,10 @@ class Train(object):
         checkpoint = torch.load(load_filename)
         self.net.load_state_dict(checkpoint['state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
+        self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer,
+                                                        'max', patience=5,
+                                                        factor=self.lr_decay_factor,
+                                                        verbose=True)
         self.start_iter = checkpoint['niter']
         self.best_acc = checkpoint['best_acc']
         self.all_losses = checkpoint['train_losses']
@@ -124,6 +137,7 @@ class Train(object):
                 else:
                     acc.update(0) # incorrect
         print('==> validation accuracy is %d%%' % (acc.avg * 100))
+        self.scheduler.step(acc.avg)
         self.net.train()
         return acc.avg
         
@@ -170,7 +184,7 @@ class Train(object):
             if iter % self.plot_every == 0:
                 # Add current loss avg to list of losses
                 self.all_losses.append(losses.val)
-                if len(self.val_accs) == 0:
+                if len(self.val_accs) == 0: 
                     self.val_accs.append(self.val_acc())
                 else:
                     self.val_accs.append(self.val_accs[-1])
