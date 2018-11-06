@@ -2,8 +2,7 @@ from lib.data import StateMNISTData, PartialSumStateMNISTData
 import torch.nn as nn
 import math, torch, os
 from lib.train import TrainMORNN
-from lib.model import RNN_LSTM, RNN_MLP, RNN_LSTM_MoW, RNN_SLSTM, RNN_ILSTM, \
-    RNN_IMLP, RNN_MLP_MoW, RNN_SMLP
+from lib.model import MODELS
 
 # exact setting for each experiment ran
 SYNTHETIC_EXPERIMENTS = {}
@@ -28,7 +27,7 @@ class Experiment(object):
         raise NotImplementedError()
 
     def run(self, args, train_data, val_data):
-        net = eval(args.arch)(784, args.nhidden, 10)
+        net = MODELS[args.arch](784, args.nhidden, 10)
 
         print(args)
         if args.arch == 'RNN_LSTM':

@@ -9,16 +9,15 @@ import torch.nn.functional as F
 import torch.optim as optim
 import time
 import math, tqdm
-from lib.data import FlatData, MNIST_add_data, StateMNISTData
 from lib.utils import timeSince
 from lib.utils import random_split_dataset
+from lib.model import MODELS
 import random
 import torch.backends.cudnn as cudnn
 import warnings, argparse
 from lib.experiment import SYNTHETIC_EXPERIMENTS
 
-model_names = ['RNN_LSTM', 'RNN_LSTM_MoW', 'RNN_SLSTM', 'RNN_ILSTM', \
-               'RNN_MLP', 'RNN_IMLP', 'RNN_MLP_MoW', 'RNN_SMLP']
+model_names = MODELS.keys()
 exp_names = SYNTHETIC_EXPERIMENTS.keys()
 
 # parse arguments

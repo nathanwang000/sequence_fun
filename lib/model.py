@@ -5,6 +5,8 @@ import torch.nn.functional as F
 import numpy as np
 import warnings
 
+MODELS = {}
+
 class MLP(nn.Module):
 
     def __init__(self, neuron_sizes, activation=nn.LeakyReLU, bias=True): 
@@ -297,5 +299,13 @@ class RNN_MLP_MoW(RNN_Memoryless, RNN_MoW):
     def describe(self):
         return '''mixture of weights for each time step with total of k clusters'''
     
-
-
+MODELS = {
+    'RNN_LSTM': RNN_LSTM,
+    'RNN_LSTM_MoW': RNN_LSTM_MoW,
+    'RNN_SLSTM': RNN_SLSTM,
+    'RNN_ILSTM': RNN_ILSTM,
+    'RNN_MLP': RNN_MLP,
+    'RNN_IMLP': RNN_IMLP,
+    'RNN_MLP_MoW': RNN_MLP_MoW,
+    'RNN_SMLP': RNN_SMLP
+}
