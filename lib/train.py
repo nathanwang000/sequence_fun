@@ -38,9 +38,9 @@ class Train(object):
         self.n_iters = n_iters
         self.n_iters_val = n_iters_val
         self.batch_size = batch_size        
-        self.print_every = int(n_iters / n_print)
-        self.plot_every = int(n_iters / n_plot)
-        self.save_every = int(n_iters / n_save)
+        self.print_every = max(int(n_iters / n_print), 1)
+        self.plot_every = max(int(n_iters / n_plot), 1)
+        self.save_every = max(int(n_iters / n_save), 1)
         self.use_gpu = use_gpu
             
         self.net = net
@@ -83,10 +83,6 @@ class Train(object):
         checkpoint = torch.load(load_filename)
         self.net.load_state_dict(checkpoint['state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
-        self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer,
-                                                        'max', patience=5,
-                                                        factor=self.lr_decay_factor,
-                                                        verbose=True)
         self.start_iter = checkpoint['niter']
         self.best_acc = checkpoint['best_acc']
         self.all_losses = checkpoint['train_losses']
