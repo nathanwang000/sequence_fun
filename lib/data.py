@@ -108,7 +108,7 @@ class SequenceData(Data):
         return len(self.dset)
         
     def __getitem__(self, index):
-        return _random_one()
+        return self._random_one()
 
     def _random_one(self): # random one instance
         raise NotImplementedError()
@@ -125,7 +125,7 @@ class SequenceData(Data):
         return xs, ys, x_lengths
 
     def _generate_unpadded_data(self, batch_size, on_the_fly=True):
-        '''return a random batch'''
+        '''return a random batch or a specified batch if data saved'''
         xs = []
         ys = []
 
@@ -263,11 +263,41 @@ class StateMNISTData(StateData):
     def set_target(self, y, s):
         return self.target_function[s][y.item()] % 10
 
+class SkipStateMNISTData(StateData):
+    def set_share_cycle(self, n):
+        self.share_cycle = n
+
+    def set_target_function(self, target_function):
+        self.target_function = target_function
+
+    def init_state(self):
+        return 0, 0, 0 # (time, last1, last2)
+    
+    def state_transition(self, s, t, x, y):
+        # output next state
+        time, last1, last2 = s
+        last1, last2 = y.item(), last1
+        if hasattr(self, 'share_cycle'):
+            if t % self.share_cycle == self.share_cycle - 1:
+                last1, last2 = 0, 0
+        return t + 1,  last1, last2
+
+    def set_target(self, y, s):
+        t, last1, last2 = s
+        if hasattr(self, 'debug') and self.debug:
+            return (last2 + y) % 10        
+        return (self.target_function[t][last2] + self.target_function[t][y.item()]) % 10
+
+
 class PartialSumStateMNISTData(StateData): 
     '''statemnistdata with memory, does the partial sum task with share cycle'''
     def set_share_cycle(self, n):
         self.share_cycle = n
 
+    def set_reset0(self, reset):
+        # whether or not when hit share_cycle, reset the task from 0
+        self.reset0 = reset
+        
     def set_target_function(self, target_function):
         self.target_function = target_function
 
@@ -276,11 +306,11 @@ class PartialSumStateMNISTData(StateData):
     
     def state_transition(self, s, t, x, y):
         # output next state
-        time, ps = s
-        next_ps = (ps + y.item()) % 10
-        if hasattr(self, 'share_cycle'):
-            if t % self.share_cycle == self.share_cycle - 1:
-                next_ps = 0
+        next_ps = self.set_target(y, s)
+
+        # may raise error, need to set share_cycle and reset0 in experiment
+        if (t % self.share_cycle == self.share_cycle - 1) and self.reset0:
+            next_ps = 0
         return t + 1,  next_ps
 
     def set_target(self, y, s):
@@ -289,12 +319,5 @@ class PartialSumStateMNISTData(StateData):
             return (ps + y) % 10        
         return (ps + self.target_function[t][y.item()]) % 10
     
-''' examples of state mnist data
-# 1. sharing 3 groups of data
-min_length, max_length = 1, 9
-target_function = [torch.randperm(n_categories) \
-                   for _ in range(math.ceil(max_length / 3))]
-target_function = [item for item in target_function for _ in range(3)]
-'''
         
         

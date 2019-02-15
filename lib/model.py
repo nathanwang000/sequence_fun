@@ -33,13 +33,15 @@ class MLP(nn.Module):
 ######################## not optimized start #######################################
 class BaseModelLSTM(nn.Module):
     
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size, num_layers=1):
         super(BaseModelLSTM, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
+        self.num_layers = num_layers
         
-        self.model = torch.nn.LSTM(self.input_size, self.hidden_size)
+        self.model = torch.nn.LSTM(self.input_size, self.hidden_size,
+                                   num_layers=num_layers)
         self.h2o = nn.Linear(hidden_size, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 
@@ -69,11 +71,12 @@ class BaseModelLSTM(nn.Module):
     
 class BaseModelMLP(nn.Module):
     
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size, num_layers=1):
         super(BaseModelMLP, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
+        self.num_layers = num_layers
         
         self.model = MLP([input_size, hidden_size])
         self.h2o = nn.Linear(hidden_size, output_size)
@@ -100,18 +103,21 @@ class BaseModelMLP(nn.Module):
 # to do a lot of predictions, I need to a) pad target and b) mask out unwanted loss terms
 class RNN(nn.Module):
 
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size,
+                 num_layers=1, num_directions=1):
         super(RNN, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
         self.output_size = output_size
+        self.num_layers = num_layers
+        self.num_directions = num_directions
 
         self.custom_init()
 
     def custom_init(self):
         raise NotImplementedError()
 
-    def get_model(self, t):
+    def get_model(self, t, hidden):
         raise NotImplementedError()
     
     def base_model(self):
@@ -128,13 +134,17 @@ class RNN(nn.Module):
 
     def initHidden(self, batch_size, use_gpu=False):
         # for both cell memory and hidden neurons
-        h, c = (torch.zeros(1, batch_size, self.hidden_size),
-                torch.zeros(1, batch_size, self.hidden_size))
+        h, c = (torch.zeros(self.num_layers * self.num_directions,
+                            batch_size, self.hidden_size),
+                torch.zeros(self.num_layers * self.num_directions,
+                            batch_size, self.hidden_size))
 
         cuda_check = next(self.parameters())
         if cuda_check.is_cuda:
             h = h.cuda()
             c = c.cuda()
+
+        return (h, c) # assume base model is lstm
 
     def after_backward(self):
         # code to run after backward function, before optimizer
@@ -146,7 +156,7 @@ class RNN(nn.Module):
         outputs = []
         for t in range(seq_len):
             # get a new model for each time step            
-            model = self.get_model(t)
+            model = self.get_model(t, hidden) # use hidden to index
             o, hidden = model(x[t].view(1, bs, -1), hidden)
             outputs.append(o)
         o = torch.cat(outputs, 0) # (seq_len, bs, _)
@@ -157,14 +167,16 @@ class RNN(nn.Module):
 class RNN_Memory(RNN):
 
     def base_model(self):
-        return BaseModelLSTM(self.input_size, self.hidden_size, self.output_size)    
+        return BaseModelLSTM(self.input_size, self.hidden_size, self.output_size,
+                             self.num_layers)    
     
 class RNN_Memoryless(RNN):
     '''mlp sharing the same interface with RNN, basically 
     ignore time dependence and only use last step information for prediction'''
 
     def base_model(self):
-        return BaseModelMLP(self.input_size, self.hidden_size, self.output_size)
+        return BaseModelMLP(self.input_size, self.hidden_size, self.output_size,
+                            self.num_layers)
 
 class RNN_Independent(RNN): # sharing strategy
     ''' independent: each time step assign a different model '''
@@ -176,7 +188,7 @@ class RNN_Independent(RNN): # sharing strategy
         while t >= len(self.models):
             self.models.append(self.base_model())
         
-    def get_model(self, t):
+    def get_model(self, t, hidden):
         return self.models[t]
 
 class RNN_Staged(RNN): # sharing strategy
@@ -194,7 +206,7 @@ class RNN_Staged(RNN): # sharing strategy
         while len(self.models) <= len(self.groups):
             self.models.append(self.base_model())
     
-    def get_model(self, t):
+    def get_model(self, t, hidden):
         for i, g in enumerate(self.groups):
             if t in g:
                 return self.models[i]
@@ -225,7 +237,7 @@ class RNN_MoW(RNN): # sharing strategy
         coef = nn.functional.softmax(self.coef, dim=1) # wasteful computation: todo
         return sum([c*p for c, p in zip(coef[t], params)])
     
-    def get_model(self, t):
+    def get_model(self, t, hidden):
         # model has parameters that are not variables, so we have to manully
         # backprop model parameters to their sub module
         model = self.models[t] # the main model 
@@ -246,8 +258,87 @@ class RNN_MoW(RNN): # sharing strategy
                 # wasteful computation: todo: save this in get_model
                 c = self._combine_weights(params, t)
                 c.backward(p.grad)
+
+class RNN_MoO(RNN): # mixture of output
+    '''mixture of output for each time step with total of k clusters'''
+    def custom_init(self):
+        self.models = torch.nn.ModuleList()
+        self.setKT(1, 3)
+
+    def setKT(self, k, t): # k * t weights
+        '''k clusters with maximum of t time steps'''
+        self.k = k
+        self.T = t
+
+        while len(self.models) < k:
+            self.models.append(self.base_model())
+
+        # each row of coef index into a model
+        self.coef = torch.nn.Parameter(torch.zeros(self.hidden_size, k)) 
+        nn.init.uniform_(self.coef)
+
+    def forward(self, x, hidden, input_lengths):    
+        seq_len, bs, _ = x.shape
+        combine_weights = self.get_combine_weights(hidden) # bs, k
+
+        outputs = []
+        for t in range(seq_len):
+            # combine output of all models
+            o_s = []
+            h_s = []
+            for model in self.models:
+                o, hidden = model(x[t].view(1, bs, -1), hidden)
+                o_s.append(o)
+                h_s.append(hidden)
+
+            # fast version
+            # proper way
+            # reshape o_s to be [bs, seq_len * _, k], seqlen=1 in our case
+            # reshpae combine_weights to be [bs, k, 1]
+            # o_ = torch.bmm(o_s, combine_weights) # output [bs, _, 1]
+            # reshape o_ to be [1, bs, _]
+            o_s = torch.cat(o_s, 0).permute(1, 2, 0) # from [k, bs, _] to [bs, _, k]
+            o_ = torch.bmm(o_s, combine_weights.unsqueeze(2)).squeeze(2)
+            o_ = o_.unsqueeze(0)
+            
+            ## slow version:
+            # (bs, k), (k, seq_len, bs, _)            
+            # o_ = torch.zeros_like(o) # (seq_len, bs, _)
+            # for i in range(bs):
+            #     o_[:, i, :] = sum([c*out for c, out in zip(
+            #         combine_weights[i], [out[:, i, :] for out in o_s])])
+            
+            outputs.append(o_)
+        o = torch.cat(outputs, 0) # (seq_len, bs, _)
+
+        return o, hidden
+        
+    def get_combine_weights(self, hidden):
+        h, c = hidden # num_layers * num_directions, batchsize, hiddensize
+        # use last layer's hidden output as indexer: batchsize, hiddensize
+        self.last_h = h.view(self.num_layers, self.num_directions,
+                             -1, self.hidden_size)[-1].view(-1, self.hidden_size)
+        combine_weights = torch.mm(self.last_h, self.coef) # batchsize, k
+        combine_weights = nn.functional.softmax(combine_weights, dim=1)
+        return combine_weights
     
 ########################################################################################
+class RNN_LSTM_2layers(RNN_Memory):
+
+    def custom_init(self):
+        self.num_layers = self.num_layers * 2
+        self.model = BaseModelLSTM(self.input_size,
+                                   self.hidden_size,
+                                   self.output_size,
+                                   self.num_layers)
+
+    def forward(self, x, hidden, input_lengths):
+        # change the padded data with variable length: save computation
+        x = torch.nn.utils.rnn.pack_padded_sequence(x, input_lengths)
+        o, hidden = self.model(x, hidden) # hidden is (h, c)
+
+        return o, hidden
+
 class RNN_LSTM(RNN_Memory):
 
     def custom_init(self):
@@ -271,6 +362,10 @@ class RNN_SLSTM(RNN_Memory, RNN_Staged):
 class RNN_LSTM_MoW(RNN_Memory, RNN_MoW):
     def describe(self):
         return '''mixture of weights for each time step with total of k clusters'''
+
+class RNN_LSTM_MoO(RNN_Memory, RNN_MoO):
+    def describe(self):
+        return '''mixture of output for each time step with total of k clusters'''
     
 ###################################################################################### 
 class RNN_MLP(RNN_Memoryless):
@@ -280,7 +375,7 @@ class RNN_MLP(RNN_Memoryless):
     def custom_init(self):
         self.model = self.base_model()
 
-    def get_model(self, t):
+    def get_model(self, t, hidden):
         return self.model
     
 class RNN_IMLP(RNN_Memoryless, RNN_Independent):
@@ -301,11 +396,13 @@ class RNN_MLP_MoW(RNN_Memoryless, RNN_MoW):
     
 MODELS = {
     'RNN_LSTM': RNN_LSTM,
+    'RNN_LSTM_2layers': RNN_LSTM_2layers,
     'RNN_LSTM_MoW': RNN_LSTM_MoW,
+    'RNN_LSTM_MoO': RNN_LSTM_MoO,    
     'RNN_SLSTM': RNN_SLSTM,
     'RNN_ILSTM': RNN_ILSTM,
     'RNN_MLP': RNN_MLP,
     'RNN_IMLP': RNN_IMLP,
     'RNN_MLP_MoW': RNN_MLP_MoW,
-    'RNN_SMLP': RNN_SMLP
+    'RNN_SMLP': RNN_SMLP,
 }

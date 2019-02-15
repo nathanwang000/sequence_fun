@@ -3,14 +3,11 @@ import os, copy
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
-import torchvision.datasets as dset
-import torchvision.transforms as transforms
 import torch.nn.functional as F
 import torch.optim as optim
 import time
 import math, tqdm
 from lib.utils import timeSince
-from lib.utils import random_split_dataset
 from lib.model import MODELS
 import random
 import torch.backends.cudnn as cudnn
@@ -33,6 +30,10 @@ parser.add_argument('--nhidden', default=30, type=int,
                     help='number of hidden units')
 parser.add_argument('--use_gpu', action='store_true',
                     help='whether or not use gpu')
+parser.add_argument('--override_data', action='store_true',
+                    help='whether override data')
+parser.add_argument('--override_model', action='store_true',
+                    help='whether override model')
 parser.add_argument('--smdir', default='models', type=str,
                     help='directory to save model')
 parser.add_argument('--batch_size', default=32, type=int, metavar='B',
@@ -43,6 +44,13 @@ parser.add_argument('--n_save_model', default=10, type=int,
                     help='number of model save and validation eval in trainer')
 parser.add_argument('--nshared', default=2, type=int,
                     help='number of shared models (for MoW)')
+parser.add_argument('--num_layers', default=1, type=int,
+                    help='number of layers for lstm')
+parser.add_argument('--optimizer', default='Adam', choices=['Adam', 'SGD'], 
+                    help='which optimizer to use')
+parser.add_argument('--lr', default=0.001, type=float,
+                    help='learning rate')
+
 
 ####################### data generate parameters ########################
 parser.add_argument('--sddir', default='sequence_data', type=str,
@@ -70,17 +78,6 @@ if args.seed is not None:
                   'from checkpoints.')
     
 ################################### get data ###########################################
-root = './mnist_data'
-if not os.path.exists(root):
-    os.mkdir(root)
-    
-trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (1.0,))])
-# if not exist, download mnist dataset
-trainval_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
-train_proportion = 0.8
-train_set, val_set = random_split_dataset(trainval_set, [train_proportion, 1-train_proportion])
-test_set = dset.MNIST(root=root, train=False, transform=trans, download=True)
-
 savename_tr = os.path.join(args.sddir, 'train.pkl')
 savename_val = os.path.join(args.sddir, 'val.pkl')
 savename_te = os.path.join(args.sddir, 'test.pkl')
@@ -89,10 +86,11 @@ n_val = 3000 # don't need to vary
 n_te = 10000 # don't need to vary
 
 experiment = SYNTHETIC_EXPERIMENTS[args.exp]
+train_set, val_set, test_set = experiment.get_train_val_test()
 
-train_data = experiment.gen_data(train_set, savename_tr, n_tr)
-val_data = experiment.gen_data(val_set, savename_val, n_val)
-test_data = experiment.gen_data(test_set, savename_te, n_te)
+train_data = experiment.gen_data(train_set, args.override_data, savename_tr, n_tr)
+val_data = experiment.gen_data(val_set, args.override_data, savename_val, n_val)
+test_data = experiment.gen_data(test_set, args.override_data, savename_te, n_te)
 
 ######################################### run models ###################################
 experiment.run(args, train_data, val_data)

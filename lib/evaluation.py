@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import glob
+import tqdm
 from lib.train import Train
 
 class Evaluation(object):
@@ -145,7 +146,7 @@ def plot_train_val_multiple(patterns, colors=['blue', 'orange', 'green', 'red',
     import seaborn as sns
     import matplotlib.ticker as ticker
     
-    for i, pattern in enumerate(patterns):
+    for i, pattern in enumerate(tqdm.tqdm(patterns)):
         tr_curves, val_curves, name = get_train_val_curves(pattern)
         if name is not "":
             plot_fill(tr_curves, label=name, color=colors[i])
