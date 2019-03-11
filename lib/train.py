@@ -229,7 +229,6 @@ class TrainSORNN(Train): # single output rnn
     def train_step(self, x, y, x_lengths):
         hidden = self.net.initHidden(batch_size=self.batch_size)
 
-
         self.optimizer.zero_grad()
         output, hidden = self.net(x, hidden, x_lengths)
 

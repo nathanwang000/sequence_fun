@@ -33,16 +33,18 @@ class MLP(nn.Module):
 ######################## not optimized start #######################################
 class BaseModelLSTM(nn.Module):
     
-    def __init__(self, input_size, hidden_size, output_size, num_layers=1):
+    def __init__(self, input_size, hidden_size, output_size, num_layers=1,
+                 num_directions=1):
         super(BaseModelLSTM, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.num_layers = num_layers
-        
+        self.bidirectional = (num_directions == 2)
         self.model = torch.nn.LSTM(self.input_size, self.hidden_size,
-                                   num_layers=num_layers)
-        self.h2o = nn.Linear(hidden_size, output_size)
+                                   num_layers=num_layers,
+                                   bidirectional=self.bidirectional)
+        self.h2o = nn.Linear(hidden_size * num_directions, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 
     def forward(self, x, hidden):
@@ -111,6 +113,7 @@ class RNN(nn.Module):
         self.output_size = output_size
         self.num_layers = num_layers
         self.num_directions = num_directions
+        assert num_directions == 1, "bidirection haven't impelmented yet"
 
         self.custom_init()
 
@@ -150,7 +153,8 @@ class RNN(nn.Module):
         # code to run after backward function, before optimizer
         return
 
-    def forward(self, x, hidden, input_lengths):    
+    def forward(self, x, hidden, input_lengths):
+        # todo: deal with bidirectional here
         seq_len, bs, _ = x.shape
 
         outputs = []
@@ -168,7 +172,7 @@ class RNN_Memory(RNN):
 
     def base_model(self):
         return BaseModelLSTM(self.input_size, self.hidden_size, self.output_size,
-                             self.num_layers)    
+                             self.num_layers, self.num_directions)    
     
 class RNN_Memoryless(RNN):
     '''mlp sharing the same interface with RNN, basically 
@@ -473,7 +477,8 @@ class RNN_LSTM_2layers(RNN_Memory):
         self.model = BaseModelLSTM(self.input_size,
                                    self.hidden_size,
                                    self.output_size,
-                                   self.num_layers)
+                                   self.num_layers,
+                                   self.num_directions)
 
     def forward(self, x, hidden, input_lengths):
         # change the padded data with variable length: save computation
