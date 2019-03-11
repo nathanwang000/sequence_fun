@@ -22,7 +22,16 @@ class Experiment(object):
         self.min_length = 1
         self.reset0 = True # partial sum reset to 0
         self.shared_groups = [[0,1,2], [3, 4, 5]]
+        self.description = ""
 
+    def describe(self):
+        return self.description
+
+    def load_data(self, load_path):
+        data = self.gen_data_helper([])
+        data.load_data(load_path)
+        return data
+        
     def get_train_val_test(self):
         root = './mnist_data'
         if not os.path.exists(root):
@@ -67,7 +76,10 @@ class Experiment(object):
             savename = 'lstm2.pth.tar'
         elif args.arch == 'RNN_LSTM_MoO':
             net.setKT(args.nshared, self.max_length)
-            savename = 'lstm_moo_%d.pth.tar' % args.nshared       
+            savename = 'lstm_moo_%d.pth.tar' % args.nshared
+        elif args.arch == 'RNN_LSTM_MoO_time':
+            net.setKT(args.nshared, self.max_length)
+            savename = 'lstm_moot_%d.pth.tar' % args.nshared       
         elif args.arch == 'RNN_MLP':
             savename = 'mlp.pth.tar'        
         elif args.arch == 'RNN_LSTM_MoW':
@@ -163,7 +175,9 @@ exp.shared_groups = [[0,1,2,3,4]]
 register_exp('same_task', exp)    
 
 ### partially shared
-register_exp('scarce', Scarce())
+exp = Scarce()
+exp.description = "scarce: 1-9 time steps, share cycle of 3"
+register_exp('scarce', exp)
 
 ### independent
 exp = SameTask()
@@ -171,6 +185,7 @@ exp.min_length = 5
 exp.max_length = 5
 exp.share_cycle = 1
 exp.shared_groups = [[0,1,2],[3,4]]
+exp.description = "diff_task: 5 time steps, all different tasks"
 register_exp('diff_task', exp)    
 
 ############ has memory ###########
@@ -180,6 +195,7 @@ exp.min_length = 5
 exp.max_length = 5
 exp.share_cycle = 5
 exp.shared_grouexp = [[0], [1,2,3,4]]
+exp.description = "partial_sum4: 5 time steps, all shared"
 register_exp('partial_sum4', exp)
 
 ### partially shared
@@ -188,6 +204,7 @@ exp.min_length = 8
 exp.max_length = 8
 exp.share_cycle = 4
 exp.shared_grouexp = [[0,1,2,3], [4,5,6,7]]
+exp.description = "partial_sum_share: 8 time steps, share cycle of 4"
 register_exp('partial_sum_share', exp)
 
 ### independent: don't reset0 in partial sum

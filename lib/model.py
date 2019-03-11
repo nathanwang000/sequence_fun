@@ -240,7 +240,7 @@ class RNN_MoW(RNN): # sharing strategy
     def get_model(self, t, hidden):
         # model has parameters that are not variables, so we have to manully
         # backprop model parameters to their sub module
-        model = self.models[t] # the main model 
+        model = self.models[t] # the main model
         params_list = list(zip(*[m.parameters() for m in self.meta_models]))
         for (name, p), params in zip(model.named_parameters(), params_list):
             p.data = self._combine_weights(params, t)
@@ -259,6 +259,125 @@ class RNN_MoW(RNN): # sharing strategy
                 c = self._combine_weights(params, t)
                 c.backward(p.grad)
 
+class RNN_MoW_w(RNN): # sharing strategy
+    '''mixture of weights for each time step with total of k clusters'''
+    def custom_init(self):
+        self.models = torch.nn.ModuleList()
+        self.meta_models = torch.nn.ModuleList()
+        self.setKT(1, 3, 32)
+
+    def setKT(self, k, t, bs): # k * t weights
+        '''k clusters with maximum of t time steps'''
+        self.k = k
+        self.T = t
+
+        while len(self.models) < t * bs: # 32 x t models: too much space requirement
+            self.models.append(self.base_model())
+
+        while len(self.meta_models) < k:
+            self.meta_models.append(self.base_model())            
+
+        self.coef = torch.nn.Parameter(torch.zeros(t, k)) # each row should add to 1
+        nn.init.uniform_(self.coef)
+
+    def forward(self, x, hidden, input_lengths):    
+        seq_len, bs, _ = x.shape
+
+        outputs = []
+        next_h = []
+        next_c = []
+        for t in range(seq_len):
+            outputs_ = []
+            for i in range(bs):
+                # get a new model for each time step
+                model = self.get_model(t, i, hidden) # use hidden to index
+                # hidden: (n_layers, bs, hidden_size),  (n_layers, bs, hidden_size)
+                o, (h, c) = model(x[t][i].view(1, 1, -1), hidden)
+                outputs_.append(o)
+                next_h.append(h)
+                next_c.append(c)
+            outputs.append(torch.cat(outputs_, 1)) # (1, bs, _)
+            hidden = torch.cat(next_h, 1), torch.cat(next_c, 1)
+            next_h, next_c = [], []
+        o = torch.cat(outputs, 0) # (seq_len, bs, _)
+
+        return o, hidden
+        
+    def _combine_weights(self, params, t):
+        coef = nn.functional.softmax(self.coef, dim=1) # wasteful computation: todo
+        return sum([c*p for c, p in zip(coef[t], params)])
+    
+    def get_model(self, t, batch_index, hidden):
+        # need 128 models: too much, just do a for loop todo: save intermediate comput
+        # ation
+        
+        # model has parameters that are not variables, so we have to manully
+        # backprop model parameters to their sub modules
+        model = self.models[t] # the main model 
+        params_list = list(zip(*[m.parameters() for m in self.meta_models]))
+        for (name, p), params in zip(model.named_parameters(), params_list):
+            p.data = self._combine_weights(params, t)
+        return model
+
+    def after_backward(self):
+        # manully back prop into meta networks
+        # need list instead of zip alone because zip only traverse once
+        params_list = list(zip(*[m.parameters() for m in self.meta_models]))
+
+        for t, model in enumerate(self.models):
+            for (name, p), params in zip(model.named_parameters(), params_list):
+                if p.grad is None: # sometimes t are large so that not updated yet
+                    continue
+                # wasteful computation: todo: save this in get_model
+                c = self._combine_weights(params, t)
+                c.backward(p.grad)
+                
+class RNN_MoO_time(RNN): # mixture of output
+    '''mixture of output for each time step with total of k clusters'''
+    def custom_init(self):
+        self.models = torch.nn.ModuleList()
+        self.setKT(1, 3)
+
+    def setKT(self, k, t): # k * t weights
+        '''k clusters with maximum of t time steps'''
+        self.k = k
+        self.T = t
+
+        while len(self.models) < k:
+            self.models.append(self.base_model())
+
+        # each row is for a time step
+        self.coef = torch.nn.Parameter(torch.zeros(t, k)) 
+        nn.init.uniform_(self.coef)
+
+    def forward(self, x, hidden, input_lengths):    
+        seq_len, bs, _ = x.shape
+
+        outputs = []
+        for t in range(seq_len):
+            combine_weights = nn.functional.softmax(self.coef[t], dim=0)
+            # combine output of all models
+            o_s = []
+            h_s = [] # short term memory
+            c_s = [] # long term memory
+            for model in self.models:
+                o, (h, c) = model(x[t].view(1, bs, -1), hidden)
+                o_s.append(o)
+                h_s.append(h)
+                c_s.append(c)
+
+            # [seq_len, bs, _]
+            o_ = sum(c * out for c, out in zip(combine_weights, o_s))
+            h = sum(c * h for c, h in zip(combine_weights, h_s))
+            cell = sum(c * cell for c, cell in zip(combine_weights, c_s))
+
+            hidden = (h, cell)
+            outputs.append(o_)
+            
+        o = torch.cat(outputs, 0) # (seq_len, bs, _)
+
+        return o, hidden
+        
 class RNN_MoO(RNN): # mixture of output
     '''mixture of output for each time step with total of k clusters'''
     def custom_init(self):
@@ -279,17 +398,41 @@ class RNN_MoO(RNN): # mixture of output
 
     def forward(self, x, hidden, input_lengths):    
         seq_len, bs, _ = x.shape
-        combine_weights = self.get_combine_weights(hidden) # bs, k
 
+        self.last_combine_weights = [] # book keep coeficient used at each time step
         outputs = []
         for t in range(seq_len):
             # combine output of all models
+            combine_weights = self.get_combine_weights(hidden) # bs, k
+            self.last_combine_weights.append(combine_weights)
+            
             o_s = []
             h_s = []
+            c_s = []
             for model in self.models:
-                o, hidden = model(x[t].view(1, bs, -1), hidden)
+                o, (h, c) = model(x[t].view(1, bs, -1), hidden)
                 o_s.append(o)
-                h_s.append(hidden)
+                h_s.append(h.unsqueeze(0))
+                c_s.append(c.unsqueeze(0))                
+
+            _, num_layers, bs, hidden_size = h_s[0].shape
+            # reshape h_s from [k, n_layers, bs, hidden_size]
+            # to [bs, n_layers * hidden_size, k]
+            # reshape combine_weights to be [bs, k, 1]
+            h_s = torch.cat(h_s, 0).permute(2,1,3,0).contiguous().view(bs,-1,self.k)
+            h = torch.bmm(h_s, combine_weights.unsqueeze(2)).squeeze(2).view(
+                bs, num_layers, hidden_size
+            )
+            h = h.permute(1, 0, 2).contiguous()
+
+            # do the same for cell
+            c_s = torch.cat(c_s, 0).permute(2,1,3,0).contiguous().view(bs,-1,self.k)
+            cell = torch.bmm(c_s, combine_weights.unsqueeze(2)).squeeze(2).view(
+                bs, num_layers, hidden_size
+            )
+            cell = cell.permute(1, 0, 2).contiguous()
+
+            hidden = (h, cell)
 
             # fast version
             # proper way
@@ -361,11 +504,18 @@ class RNN_SLSTM(RNN_Memory, RNN_Staged):
         
 class RNN_LSTM_MoW(RNN_Memory, RNN_MoW):
     def describe(self):
-        return '''mixture of weights for each time step with total of k clusters'''
+        return '''time based 
+        mixture of weights for each time step with total of k clusters'''
 
 class RNN_LSTM_MoO(RNN_Memory, RNN_MoO):
     def describe(self):
-        return '''mixture of output for each time step with total of k clusters'''
+        return '''hidden vector based 
+        mixture of output for each time step with total of k clusters'''
+
+class RNN_LSTM_MoO_time(RNN_Memory, RNN_MoO_time):
+    def describe(self):
+        return '''time based mixture of output for each time 
+        step with total of k clusters'''
     
 ###################################################################################### 
 class RNN_MLP(RNN_Memoryless):
@@ -397,8 +547,9 @@ class RNN_MLP_MoW(RNN_Memoryless, RNN_MoW):
 MODELS = {
     'RNN_LSTM': RNN_LSTM,
     'RNN_LSTM_2layers': RNN_LSTM_2layers,
-    'RNN_LSTM_MoW': RNN_LSTM_MoW,
-    'RNN_LSTM_MoO': RNN_LSTM_MoO,    
+    'RNN_LSTM_MoW': RNN_LSTM_MoW, # this should be called time as well
+    'RNN_LSTM_MoO': RNN_LSTM_MoO,
+    'RNN_LSTM_MoO_time': RNN_LSTM_MoO_time,    
     'RNN_SLSTM': RNN_SLSTM,
     'RNN_ILSTM': RNN_ILSTM,
     'RNN_MLP': RNN_MLP,

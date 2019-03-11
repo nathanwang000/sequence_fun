@@ -140,8 +140,8 @@ def get_train_val_curves(pattern):
     return tr_curves, val_curves, name
 
 def plot_train_val_multiple(patterns, colors=['blue', 'orange', 'green', 'red', 
-                                              'purple', 'brown', 'pink', 'gray'], 
-                            fontsize=15):
+                                              'purple', 'maroon', 'k', 'pink'], 
+                            fontsize=15, ylim=None):
     import matplotlib.pyplot as plt
     import seaborn as sns
     import matplotlib.ticker as ticker
@@ -153,6 +153,7 @@ def plot_train_val_multiple(patterns, colors=['blue', 'orange', 'green', 'red',
     plt.legend(loc='center right', bbox_to_anchor=(1.5, 0.5))
     plt.title('training loss', fontsize=fontsize)
     plt.grid()
+    plt.ylim(ylim)
     plt.show()
     
     for i, pattern in enumerate(patterns):
@@ -162,6 +163,7 @@ def plot_train_val_multiple(patterns, colors=['blue', 'orange', 'green', 'red',
     plt.legend(loc='center right', bbox_to_anchor=(1.5, 0.5))
     plt.title('validation acc', fontsize=fontsize)
     plt.grid()
+    plt.ylim(ylim)    
     plt.show()
 
         

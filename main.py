@@ -13,7 +13,7 @@ import random
 import torch.backends.cudnn as cudnn
 import warnings, argparse
 from lib.experiment import SYNTHETIC_EXPERIMENTS
-
+torch.set_num_threads(1)
 model_names = MODELS.keys()
 exp_names = SYNTHETIC_EXPERIMENTS.keys()
 

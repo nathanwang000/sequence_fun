@@ -17,6 +17,9 @@ art.
 
 * TODO Understanding the data
   
+  the data was on mld3
+  https://github.com/YerevaNN/mimic3-benchmarks
+
   - [X] read through [[./mimic3/README.md][documentation]]
     
     the result are saved in the results folder for each method, it is a json

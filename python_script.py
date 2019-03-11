@@ -43,12 +43,14 @@ if not args.debug:
     seeds = [42, 8, 3]
     ntrs  = [1000, 10000] #[1000, 500, 100, 5000, 10000]
     model_names = [
-        'RNN_LSTM_2layers',
-        'RNN_LSTM',
-        'RNN_ILSTM',
-        'RNN_LSTM_MoW',
-        'RNN_SLSTM',
-        'RNN_LSTM_MoO']
+        # 'RNN_LSTM_2layers',
+        # 'RNN_LSTM',
+        # 'RNN_ILSTM',
+        # 'RNN_LSTM_MoW',
+        'RNN_LSTM_MoO',
+        'RNN_LSTM_MoO_time',
+        # 'RNN_SLSTM',
+    ]
     #'RNN_MLP', 'RNN_IMLP', 'RNN_MLP_MoW', 'RNN_SMLP']
 else: # debug run
     model_dir_base = model_dir_base + "_debug"
@@ -56,7 +58,7 @@ else: # debug run
     args.override_model = True
     seeds = [42]
     ntrs = [100]
-    model_names = ['RNN_LSTM_2layers'] #['RNN_LSTM_MoO'] #['RNN_LSTM'] 
+    model_names = ['RNN_LSTM_MoO'] # ['RNN_LSTM_2layers'] #['RNN_LSTM'] 
 
 for i, seed in enumerate(seeds):
     for ntr in ntrs:
