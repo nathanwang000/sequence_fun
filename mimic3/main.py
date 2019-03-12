@@ -116,9 +116,10 @@ def load_data(path):
     y = torch.from_numpy(data['labels'])
     return TensorDataset(x, y)
 
-train_dataset = load_data('/data1/mimic/jeeheh_IHMnpz/IHM_train.npz')
-val_dataset = load_data('/data1/mimic/jeeheh_IHMnpz/IHM_val.npz')
-test_dataset = load_data('/data1/mimic/jeeheh_IHMnpz/IHM_test.npz')
+datapath = "{}/jeeheh_IHMnpz".format(os.environ['mimic3path'])
+train_dataset = load_data('{}/IHM_train.npz'.format(datapath))
+val_dataset = load_data('{}/IHM_val.npz'.format(datapath))
+test_dataset = load_data('{}/IHM_test.npz'.format(datapath))
 
 # Hyper-parameters
 embed_size = 76
