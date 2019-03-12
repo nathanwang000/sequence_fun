@@ -34,16 +34,20 @@ class MLP(nn.Module):
 class BaseModelLSTM(nn.Module):
     
     def __init__(self, input_size, hidden_size, output_size, num_layers=1,
-                 num_directions=1):
+                 num_directions=1, dropout=0):
         super(BaseModelLSTM, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.num_layers = num_layers
+        self.dropout = dropout
+        if dropout != 0:
+            self.drop = nn.Dropout(p=dropout)
         self.bidirectional = (num_directions == 2)
         self.model = torch.nn.LSTM(self.input_size, self.hidden_size,
                                    num_layers=num_layers,
-                                   bidirectional=self.bidirectional)
+                                   bidirectional=self.bidirectional,
+                                   dropout=dropout)
         self.h2o = nn.Linear(hidden_size * num_directions, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 
@@ -62,6 +66,9 @@ class BaseModelLSTM(nn.Module):
         o = o.contiguous()
         o = o.view(-1, o.shape[2])
 
+        if self.dropout != 0:
+            o = self.drop(o)
+        
         # run through prediction layer: 
         o = self.h2o(o)
         o = self.softmax(o)
@@ -106,13 +113,14 @@ class BaseModelMLP(nn.Module):
 class RNN(nn.Module):
 
     def __init__(self, input_size, hidden_size, output_size,
-                 num_layers=1, num_directions=1):
+                 num_layers=1, num_directions=1, dropout=0):
         super(RNN, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
         self.output_size = output_size
         self.num_layers = num_layers
         self.num_directions = num_directions
+        self.dropout = dropout
         assert num_directions == 1, "bidirection haven't impelmented yet"
 
         self.custom_init()
@@ -172,7 +180,7 @@ class RNN_Memory(RNN):
 
     def base_model(self):
         return BaseModelLSTM(self.input_size, self.hidden_size, self.output_size,
-                             self.num_layers, self.num_directions)    
+                             self.num_layers, self.num_directions, self.dropout)    
     
 class RNN_Memoryless(RNN):
     '''mlp sharing the same interface with RNN, basically 
@@ -478,7 +486,8 @@ class RNN_LSTM_2layers(RNN_Memory):
                                    self.hidden_size,
                                    self.output_size,
                                    self.num_layers,
-                                   self.num_directions)
+                                   self.num_directions,
+                                   self.dropout)
 
     def forward(self, x, hidden, input_lengths):
         # change the padded data with variable length: save computation
