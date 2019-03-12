@@ -7,6 +7,7 @@ import time
 
 procs = []
 n_concurrent_process = 5
+nruns = 10
 
 models = ['RNN_LSTM','RNN_LSTM_MoO','RNN_LSTM_MoW','RNN_LSTM_MoO_time','RNN_ILSTM']
 lrs = [0.001]
@@ -17,10 +18,13 @@ batch_sizes = [100]
 # 16 settings for 5 models, then 160 min per model, total of 800 / 60 ~= 13 hours
 # at most 16 hours: bottle neck is RNN_MoW
 
-for lr, d, bs, nhidden, nlayer, m in product(lrs, dropouts, batch_sizes,
-                                             nhiddens, nlayers, models):
-    commands = ["python", "main.py", "-lr", str(lr), "-d", str(d), "-bs", str(bs),
-                "-nhidden", str(nhidden), "-nlayer", str(nlayer), "-m", m]
+for i, m in product(range(nruns), models):
+    if m == 'RNN_LSTM':
+        commands = ["python", "main.py", "-s", "repeat", "-lr", "0.001",
+                    "-d", '0.3', "-bs", '100',
+                    "-nhidden", "64", "-nlayer", '2', "-m", m]
+    elif m == 'RNN_LSTM_MoO'
+
     procs.append(subprocess.Popen(commands))
 
     while True:

@@ -210,7 +210,7 @@ for epoch in range(num_epochs):
             val_aucs.append(-val_auc) # negative b/c it is the error criteria
             if val_best < val_auc:
                 val_best = val_auc
-                torch.save(model.state_dict(), name + '.ckpt_best_{}'.format(step))
+                torch.save(model.state_dict(), name + '.ckpt_best_{}'.format(epoch))
             test_aucs.append(test_auc)
             # opt_recorder.record()
             save()
