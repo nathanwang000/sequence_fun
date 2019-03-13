@@ -4,9 +4,19 @@ import atexit
 import subprocess
 from itertools import product
 import time
+import argparse
+
+parser = argparse.ArgumentParser(description="relaxed rnn")
+parser.add_argument('-s', type=str,
+                    help='save directory', default='train_loss')
+parser.add_argument('-p', type=float, help='pct training data to use', default=1)
+parser.add_argument('-c', type=int, help='n concurrent process', default=20)
+args = parser.parse_args()
+print(args)
 
 procs = []
-n_concurrent_process = 5
+n_concurrent_process = args.c
+save_dir = args.s + "_{:.1f}".format(args.p)
 
 models = ['RNN_LSTM','RNN_LSTM_MoO','RNN_LSTM_MoW','RNN_LSTM_MoO_time','RNN_ILSTM']
 lrs = [0.001]
@@ -20,7 +30,8 @@ batch_sizes = [100]
 for lr, d, bs, nhidden, nlayer, m in product(lrs, dropouts, batch_sizes,
                                              nhiddens, nlayers, models):
     commands = ["python", "main.py", "-lr", str(lr), "-d", str(d), "-bs", str(bs),
-                "-nhidden", str(nhidden), "-nlayer", str(nlayer), "-m", m]
+                "-nhidden", str(nhidden), "-nlayer", str(nlayer), "-m", m,
+                "-s", save_dir, "-p", str(args.p)]
     procs.append(subprocess.Popen(commands))
 
     while True:

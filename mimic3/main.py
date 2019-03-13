@@ -15,9 +15,11 @@ from MTL_OPT.lib.utils import AverageMeter, OptRecorder, random_string
 from MTL_OPT.lib.utils import random_split_dataset
 import argparse
 from sklearn.externals import joblib
-parser = argparse.ArgumentParser(description="opt")
+parser = argparse.ArgumentParser(description="relaxed rnn")
 parser.add_argument('-o', type=str,
                     help='optimizer', default='torch.optim.Adam')
+parser.add_argument('-test', action='store_true',
+                    help="test mode use both train and val")
 parser.add_argument('-m', type=str,
                     help='model name', default='RNN_LSTM')
 parser.add_argument('-seed', type=int,
@@ -33,6 +35,7 @@ parser.add_argument('-d', type=float, help='dropout', default=0)
 parser.add_argument('-nhidden', type=int, help='hidden size', default=16)
 parser.add_argument('-nlayer', type=int, help='layers for lstm', default=2)
 parser.add_argument('-bs', type=int, help='batch size', default=100)
+parser.add_argument('-p', type=float, help='pct training data to use', default=1)
 
 args = parser.parse_args()
 print(args)
@@ -116,10 +119,28 @@ def load_data(path):
     y = torch.from_numpy(data['labels'])
     return TensorDataset(x, y)
 
+def subset_data(dataset, pct, seed=None):
+    if seed is not None:
+        np.random.seed(seed)
+    indices = np.random.permutation(len(dataset))
+    n = int(pct * len(dataset))
+    return torch.utils.data.Subset(dataset, indices[:n])
+    
 datapath = "{}/jeeheh_IHMnpz".format(os.environ['mimic3path'])
 train_dataset = load_data('{}/IHM_train.npz'.format(datapath))
+train_dataset = subset_data(train_dataset, args.p, args.seed)
 val_dataset = load_data('{}/IHM_val.npz'.format(datapath))
+
+if args.test:
+    train_dataset = torch.utils.data.ConcatDataset([train_dataset, val_dataset])
+
 test_dataset = load_data('{}/IHM_test.npz'.format(datapath))
+print('train data shape: {}, data of size {}'.format(len(train_dataset),
+                                                     tuple(train_dataset[0][0].shape)))
+print('val data shape: {}, data of size {}'.format(len(val_dataset),
+                                                     tuple(val_dataset[0][0].shape)))
+print('test data shape: {}, data of size {}'.format(len(test_dataset),
+                                                     tuple(test_dataset[0][0].shape)))
 
 # Hyper-parameters
 embed_size = 76
@@ -211,7 +232,7 @@ for epoch in range(num_epochs):
             val_aucs.append(-val_auc) # negative b/c it is the error criteria
             if val_best < val_auc:
                 val_best = val_auc
-                torch.save(model.state_dict(), name + '.ckpt_best_{}'.format(epoch))
+                torch.save(model.state_dict(), name + '.ckpt_best')
             test_aucs.append(test_auc)
             # opt_recorder.record()
             save()
