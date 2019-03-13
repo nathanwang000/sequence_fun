@@ -18,6 +18,8 @@ from sklearn.externals import joblib
 parser = argparse.ArgumentParser(description="relaxed rnn")
 parser.add_argument('-o', type=str,
                     help='optimizer', default='torch.optim.Adam')
+parser.add_argument('-name', type=str,
+                    help='save_name', default=None)
 parser.add_argument('-test', action='store_true',
                     help="test mode use both train and val")
 parser.add_argument('-m', type=str,
@@ -84,8 +86,9 @@ def eval_loader(model, loader):
     model.train()
     return loss_meter.avg, auc
 
+save_name = args.name if args.name else args.m
 name =  "{}/{}-{}-{}-{}-{}-{}^{:.2f}^{}".format(args.s,
-                                                args.m,
+                                                save_name,
                                                 args.lr,
                                                 args.d,
                                                 args.nhidden,
