@@ -1,4 +1,3 @@
-# a complete reproduction of keras code
 # Some part of the code was referenced from below.
 # https://github.com/pytorch/examples/tree/master/word_language_model 
 import torch
@@ -43,8 +42,8 @@ test_errors = []
 torch.set_num_threads(1)
 
 # Device configuration
-# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# device = torch.device('cpu')
 
 def eval_loader(model, loader):
     model.eval()
@@ -66,11 +65,10 @@ def eval_loader(model, loader):
 
             # Forward pass
             outputs, states = model(inputs, states)
-            loss = criterion(nn.functional.sigmoid(outputs).view(-1),
-                             targets.reshape(-1))
+            loss = criterion(outputs, targets.reshape(-1))
 
             y_true.extend([t.item() for t in targets])
-            y_score.extend([t.item() for t in nn.functional.sigmoid(outputs)]) 
+            y_score.extend([t.item() for t in nn.functional.softmax(outputs, 1)[:,1]]) 
             loss_meter.update(loss.item(), bs)
 
     auc = roc_auc_score(y_true, y_score)
@@ -108,17 +106,18 @@ def save():
 def load_data(path):
     data = np.load(path)
     x = torch.from_numpy(data['data']).float()
-    y = torch.from_numpy(data['labels']).float()
+    y = torch.from_numpy(data['labels'])
     return TensorDataset(x, y)
 
-train_dataset = load_data('/data1/mimic/jeeheh_IHMnpz/IHM_train.npz')
-val_dataset = load_data('/data1/mimic/jeeheh_IHMnpz/IHM_val.npz')
-test_dataset = load_data('/data1/mimic/jeeheh_IHMnpz/IHM_test.npz')
+datapath = "{}/IHM/jeeheh_IHMnpz".format(os.environ['mimic3path'])
+train_dataset = load_data('{}/IHM_train.npz'.format(datapath))
+train_dataset = subset_data(train_dataset, args.p, args.seed)
+val_dataset = load_data('{}/IHM_val.npz'.format(datapath))
 
 # Hyper-parameters
 embed_size = 76
 hidden_size = args.nhidden
-output_size = 1 # binary classification
+output_size = 2 # binary classification
 num_layers = args.nlayer
 num_epochs = args.epoch
 batch_size = args.bs
@@ -126,9 +125,6 @@ seq_length = 48
 learning_rate = args.lr
 bidirectional = args.b
 num_directions = 2 if bidirectional else 1
-if bidirectional:            
-    hidden_size = hidden_size // 2
-            
 
 # loader
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
@@ -150,17 +146,15 @@ class RNN(nn.Module):
         if dropout != 0:
             self.drop = nn.Dropout(p=dropout)
 
+        
         self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True,
                             bidirectional=bidirectional, dropout=dropout)
-
-        for name, p in self.lstm.named_parameters():
-            if 'weight' in name:
-                torch.nn.init.xavier_uniform_(p)        
-
         if bidirectional:
             input_size = hidden_size * 2
+        else:
+            input_size = hidden_size
         self.linear = nn.Linear(input_size, output_size)
-
+        
     def forward(self, x, h):
         # Forward propagate LSTM
         out, (h, c) = self.lstm(x, h)
@@ -180,7 +174,7 @@ model = RNN(output_size, embed_size, hidden_size, num_layers,
             bidirectional).to(device)
 
 # Loss and optimizer
-criterion = nn.BCELoss()
+criterion = nn.CrossEntropyLoss()
 if '(' in args.o:
     opt = args.o
     alpha_index = opt.find('(')
@@ -210,7 +204,7 @@ for epoch in range(num_epochs):
         
         # Forward pass
         outputs, states = model(inputs, states)
-        loss = criterion(nn.functional.sigmoid(outputs).view(-1), targets.reshape(-1))
+        loss = criterion(outputs, targets.reshape(-1))
         
         # Backward and optimize
         model.zero_grad()
