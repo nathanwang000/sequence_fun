@@ -34,7 +34,7 @@ class MLP(nn.Module):
 class BaseModelLSTM(nn.Module):
     
     def __init__(self, input_size, hidden_size, output_size, num_layers=1,
-                 num_directions=1, dropout=0):
+                 num_directions=1, dropout=0, activation=None):
         super(BaseModelLSTM, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -50,6 +50,10 @@ class BaseModelLSTM(nn.Module):
                                    dropout=dropout)
         self.h2o = nn.Linear(hidden_size * num_directions, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
+        if activation:
+            self.activation = activation
+        else:
+            self.activation = lambda x: x
 
     def forward(self, x, hidden):
         # x.shape: (seq_len, bs, _)
@@ -71,7 +75,7 @@ class BaseModelLSTM(nn.Module):
         
         # run through prediction layer: 
         o = self.h2o(o)
-        o = self.softmax(o)
+        o = self.activation(o)
 
         # dim transformation
         o = o.view(seq_len, bs, self.output_size)
@@ -113,7 +117,7 @@ class BaseModelMLP(nn.Module):
 class RNN(nn.Module):
 
     def __init__(self, input_size, hidden_size, output_size,
-                 num_layers=1, num_directions=1, dropout=0):
+                 num_layers=1, num_directions=1, dropout=0, activation=None):
         super(RNN, self).__init__()
         self.hidden_size = hidden_size
         self.input_size = input_size
@@ -122,6 +126,10 @@ class RNN(nn.Module):
         self.num_directions = num_directions
         self.dropout = dropout
         assert num_directions == 1, "bidirection haven't impelmented yet"
+        if activation:
+            self.activation = activation
+        else:
+            self.activation = lambda x: x
 
         self.custom_init()
 
@@ -143,7 +151,7 @@ class RNN(nn.Module):
         output, hidden = self.forward(x, hidden, x_lengths)
         return output
 
-    def initHidden(self, batch_size, use_gpu=False):
+    def initHidden(self, batch_size):
         # for both cell memory and hidden neurons
         h, c = (torch.zeros(self.num_layers * self.num_directions,
                             batch_size, self.hidden_size),
@@ -180,7 +188,8 @@ class RNN_Memory(RNN):
 
     def base_model(self):
         return BaseModelLSTM(self.input_size, self.hidden_size, self.output_size,
-                             self.num_layers, self.num_directions, self.dropout)    
+                             self.num_layers, self.num_directions, self.dropout,
+                             self.activation)    
     
 class RNN_Memoryless(RNN):
     '''mlp sharing the same interface with RNN, basically 
@@ -487,7 +496,8 @@ class RNN_LSTM_2layers(RNN_Memory):
                                    self.output_size,
                                    self.num_layers,
                                    self.num_directions,
-                                   self.dropout)
+                                   self.dropout,
+                                   self.activation)
 
     def forward(self, x, hidden, input_lengths):
         # change the padded data with variable length: save computation
