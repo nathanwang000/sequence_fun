@@ -33,34 +33,62 @@ art.
     what is listfile_path?
     It seems like is saying what files are for train/test/val and what is the
     target. Note that in the reader 
-    
-  - [X] run baseline code for logistic regression
-  - [X] run baseline code for RNN
-  - [ ] compute data stats
-  - [ ] write wrappers for easy evaluation
-    - [ ] rewrite the models in [[mimic3models/common_keras_models/][files]] using pytorch (10/16)
-    - [ ] rewrite model evaluation using pytorch and python3 code (10/16)
 
-* Develop baselines
+** in hospital mortality task
+   
+   data in the form of [n, time=48 hours, d=76], target is binary. The data can
+   be easily obtained by obtaining raw_train, raw_valid, raw_test in the main
+   file for ihm task. Already in numpy format.
 
-  - [ ] reproduce single task LSTM result with pytorch
-  - [ ] reproduce logistic regression result with pytorch
-  - [ ] reproduce multi-task LSTM result (this is not a priority)
-  - [-] implement all baselines
-    - [ ] logistic regression
-    - [ ] independent logistic regression (one for each time step)
-    - [ ] staged logistic regression
-    - [X] lstm
-    - [ ] independent lstm
-    - [ ] staged lstm
-  - [ ] get result on all baselines
-    - [ ] logistic regression
-    - [ ] independent logistic regression (one for each time step)
-    - [ ] staged logistic regression
-    - [ ] lstm
-    - [ ] independent lstm
-    - [ ] staged lstm
+** decompensation task
 
+   The data comes in the form of a list of all episode
+   #+BEGIN_SRC bash
+   less mimic3-benchmarks/data/decompensation/train_listfile.csv 
+   #+END_SRC
+   of the form
+   #+BEGIN_VERSE
+   stay,period_length,y_true
+   26702_episode1_timeseries.csv,1218.000000,0
+   11026_episode1_timeseries.csv,115.000000,0
+   60262_episode1_timeseries.csv,30.000000,0
+   28744_episode1_timeseries.csv,293.000000,0
+   #+END_VERSE
+   
+   An example episode (time series)
+   #+BEGIN_SRC bash
+   less mimic3-benchmarks/data/decompensation/train/10071_episode2_timeseries.csv   
+   #+END_SRC
+   looks like 
+   #+BEGIN_VERSE
+   Hours,Capillary refill rate,Diastolic blood pressure,Fraction inspired oxygen,Glascow coma scale eye opening,Glascow coma scale motor response,Glascow coma scale total,Glascow coma scale verbal response,Glucose,Heart Rate,Height,Mean blood pressure,Oxygen saturation,Respiratory rate,Systolic blood pressure,Temperature,Weight,pH
+   1.26722222222,,72.0,,,,,,,63,,95,100.0,17,141.0,36.277801513671875,,
+   1.51722222222,,90.0,,4 Spontaneously,6 Obeys Commands,15,5 Oriented,,58,,110,100.0,13,150.0,,,
+   2.51722222222,,73.0,,4 Spontaneously,6 Obeys Commands,15,5 Oriented,,66,,95.333297729492188,,20,140.0,,,
+   3.51722222222,,57.0,,4 Spontaneously,6 Obeys Commands,15,5 Oriented,,71,,78,100.0,21,120.0,,,
+   #+END_VERSE
+   
+   A reader object read in the timeseries (readers.py). Note that period_length
+   marks the duration of the episode, and each episode marks event in the
+   period. The outcome y_true marks whether the person dies in the next 24 hours
+
+   A reader object support next_example (read next example), random_shuffle (just shuffle list
+   file). For decomposition, read_example returns X (episode), t (period
+   length), y (y_true) for a particular episode.
+
+   For efficient loading?, the author read in min(steps, 1024) * batch_size
+   (that is the whole dataset) number of episodes all at once using read_chunk
+   function. Then each chunk is discretized and normalized.
+
+   The the data is sorted by length and assigned batch. Each batch are padded to
+   have equal length. Note that in training, the code doesn't distinguish padded
+   array from not padded array. 
+
+   I can easily do the same: using the decompensation pipeline. I just need to
+   use the reader as well.
+
+
+   
 * Beating the record
   
   - [ ] make sure MoA and MoW is correctly implemented
